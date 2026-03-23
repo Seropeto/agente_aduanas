@@ -1,0 +1,23 @@
+# Secretos
+.env
+
+# Claude Code
+.claude/
+
+# Documentos internos
+*.docx
+*.pdf
+
+# Datos locales (no subir al repo)
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db

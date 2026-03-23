@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentIA Aduanas</title>
+  <link rel="stylesheet" href="/frontend/css/style.css" />
+</head>
+<body>
+
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- Logo y título -->
+    <div class="sidebar-header">
+      <div class="logo-container">
+        <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        <div class="logo-text">
+          <span class="logo-title">Agent<span class="logo-ia">IA</span> Aduanas</span>
+          <span class="logo-subtitle">Chile</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Estado del scraper -->
+    <div class="sidebar-section">
+      <div class="section-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span>Estado del sistema</span>
+      </div>
+      <div class="scraper-status-card">
+        <div class="status-row">
+          <span class="status-label">Estado</span>
+          <span class="status-badge" id="scraperStatusBadge">Cargando…</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Documentos</span>
+          <span class="status-value" id="scraperTotalDocs">—</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Última actualización</span>
+          <span class="status-value status-date" id="scraperLastRun">—</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Próxima actualización</span>
+          <span class="status-value status-date" id="scraperNextRun">—</span>
+        </div>
+        <button class="btn-update" id="btnUpdateNow" onclick="triggerScraper()">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Actualizar ahora
+        </button>
+      </div>
+    </div>
+
+    <!-- Filtros de fuente -->
+    <div class="sidebar-section">
+      <div class="section-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+        </svg>
+        <span>Fuente de información</span>
+      </div>
+      <div class="filter-buttons" id="filterButtons">
+        <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+          Todas las fuentes
+        </button>
+        <button class="filter-btn" data-filter="normativa" onclick="setFilter('normativa', this)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+          Solo normativa oficial
+        </button>
+        <button class="filter-btn" data-filter="internos" onclick="setFilter('internos', this)">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          Solo documentos internos
+        </button>
+      </div>
+    </div>
+
+    <!-- Documentos internos -->
+    <div class="sidebar-section sidebar-section--grow">
+      <div class="section-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>Documentos internos</span>
+        <button class="btn-ver-docs" onclick="openExplorer()" title="Ver documentos subidos">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <span id="explorerCount" class="btn-ver-docs-count">—</span>
+        </button>
+      </div>
+
+      <!-- Zona de carga drag & drop -->
+      <div class="upload-zone" id="uploadZone"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event)"
+           onclick="document.getElementById('fileInput').click()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 16 12 12 8 16"/>
+          <line x1="12" y1="12" x2="12" y2="21"/>
+          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+        </svg>
+        <span class="upload-text">Arrastra archivos aquí</span>
+        <span class="upload-subtext">PDF, DOCX, TXT o Imagen · máx. 50 MB</span>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" style="display:none"
+               onchange="handleFileSelect(event)" multiple />
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ==================== MAIN CONTENT ==================== -->
+  <main class="main-content">
+
+    <!-- Header de la sección chat -->
+    <header class="chat-header">
+      <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="Ocultar/mostrar barra lateral">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+      <div class="chat-header-title">
+        <h1>Consulta normativa aduanera</h1>
+        <p>Consulte circulares, resoluciones, aranceles y procedimientos del Servicio Nacional de Aduanas de Chile</p>
+      </div>
+      <button class="btn-sources-info" onclick="openSourcesModal()" title="Fuentes de información">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="11" fill="currentColor"/>
+          <text x="12" y="17" text-anchor="middle" font-family="Georgia,serif" font-size="14" font-weight="bold" font-style="italic" fill="#fff">i</text>
+        </svg>
+      </button>
+      <button class="btn-clear-chat" onclick="clearChat()" title="Nueva conversación">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6"/>
+          <path d="M14 11v6"/>
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Área de mensajes del chat -->
+    <div class="chat-area" id="chatArea">
+
+      <!-- Pantalla de bienvenida (se oculta cuando hay mensajes) -->
+      <div class="welcome-screen" id="welcomeScreen">
+        <div class="welcome-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <h2>¿En qué puedo ayudarle?</h2>
+        <p>Realice consultas sobre normativa aduanera chilena, procedimientos de importación/exportación, clasificación arancelaria y más.</p>
+
+        <div class="suggested-queries" id="suggestedQueries">
+          <div class="suggested-label">Consultas frecuentes:</div>
+          <div class="query-chips">
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Cuáles son los requisitos para importar alimentos a Chile?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Cómo se calcula la base imponible del IVA en importaciones?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Qué es el régimen de Zona Franca y cómo funciona?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Cuáles son los canales de despacho aduanero?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Qué documentos se requieren para una importación definitiva?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">Explíqueme el procedimiento de valoración aduanera según el Acuerdo sobre Valoración de la OMC</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Qué es la declaración de ingreso y cuándo se utiliza?</button>
+            <button class="query-chip" onclick="sendSuggestion(this.textContent)">¿Cuál es el plazo para pagar los derechos aduaneros?</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contenedor de mensajes del chat -->
+      <div class="messages-container" id="messagesContainer"></div>
+
+    </div>
+
+    <!-- Input del chat -->
+    <div class="chat-input-area">
+      <div class="filter-indicator" id="filterIndicator">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+        </svg>
+        <span id="filterIndicatorText">Todas las fuentes</span>
+      </div>
+      <div class="input-wrapper">
+        <textarea
+          id="chatInput"
+          placeholder="Escriba su consulta sobre normativa aduanera chilena…"
+          rows="1"
+          onkeydown="handleKeyDown(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="btn-send" id="sendButton" onclick="sendMessage()" title="Enviar consulta">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-hint">
+        Presione <kbd>Enter</kbd> para enviar · <kbd>Shift+Enter</kbd> para nueva línea
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ==================== TOAST NOTIFICATIONS ==================== -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- ==================== UPLOAD PROGRESS ==================== -->
+  <div class="upload-progress-overlay" id="uploadProgressOverlay" style="display:none">
+    <div class="upload-progress-card">
+      <div class="spinner"></div>
+      <div class="upload-progress-text" id="uploadProgressText">Procesando documento…</div>
+    </div>
+  </div>
+
+  <!-- ==================== METADATA MODAL ==================== -->
+  <div class="modal-overlay" id="metadataModal" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <h3 id="modalFileName">Subir documento</h3>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="metaTitle">Título del documento</label>
+          <input type="text" id="metaTitle" class="form-input" placeholder="Ej: Contrato de Mandato N° 123" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="metaType">Tipo de documento</label>
+            <select id="metaType" class="form-input">
+              <option value="documento">Documento general</option>
+              <option value="circular">Circular</option>
+              <option value="resolucion">Resolución</option>
+              <option value="decreto">Decreto</option>
+              <option value="ley">Ley</option>
+              <option value="contrato">Contrato</option>
+              <option value="certificado">Certificado</option>
+              <option value="factura">Factura</option>
+              <option value="procedimiento">Procedimiento interno</option>
+              <option value="imagen">Imagen / Escaneo</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="metaDate">Fecha del documento</label>
+            <input type="date" id="metaDate" class="form-input" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="metaSource">Origen / Fuente</label>
+          <input type="text" id="metaSource" class="form-input" placeholder="Ej: Cliente Empresa S.A., Aduanas Chile" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-modal-cancel" onclick="cancelUpload()">Cancelar</button>
+        <button class="btn-modal-confirm" onclick="confirmUpload()">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="16 16 12 12 8 16"/>
+            <line x1="12" y1="12" x2="12" y2="21"/>
+            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+          </svg>
+          Subir e indexar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== EXPLORADOR DE DOCUMENTOS ==================== -->
+  <div class="modal-overlay" id="explorerModal" style="display:none" onclick="closeExplorer()">
+    <div class="explorer-card" onclick="event.stopPropagation()">
+      <div class="explorer-header">
+        <div class="explorer-header-left">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <h3>Documentos internos</h3>
+          <span class="explorer-total" id="explorerTotal">0 archivos</span>
+        </div>
+        <div class="explorer-header-right">
+          <div class="explorer-view-toggle">
+            <button class="view-btn active" id="viewGrid" onclick="setExplorerView('grid')" title="Vista grilla">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+              </svg>
+            </button>
+            <button class="view-btn" id="viewList" onclick="setExplorerView('list')" title="Vista lista">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <button class="explorer-close" onclick="closeExplorer()">✕</button>
+        </div>
+      </div>
+      <div class="explorer-toolbar">
+        <div class="explorer-search-wrap">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="explorer-search-icon">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="explorerSearch" class="explorer-search-input" placeholder="Buscar por nombre…" oninput="filterExplorer(this.value)" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="explorer-body" id="explorerBody">
+        <div class="docs-loading"><div class="mini-spinner"></div><span>Cargando…</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== IMAGE PREVIEW ==================== -->
+  <div class="modal-overlay" id="imagePreviewOverlay" style="display:none" onclick="closeImagePreview()">
+    <div class="image-preview-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <h3 id="imagePreviewTitle"></h3>
+        <button onclick="closeImagePreview()" style="margin-left:auto;background:none;border:none;color:#fff;cursor:pointer;font-size:20px;line-height:1;">✕</button>
+      </div>
+      <div style="padding:12px;background:#111;display:flex;align-items:center;justify-content:center;max-height:80vh;overflow:auto;">
+        <img id="imagePreviewImg" src="" alt="" style="max-width:100%;max-height:75vh;object-fit:contain;border-radius:4px;" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL FUENTES ==================== -->
+  <div class="modal-overlay" id="sourcesModal" style="display:none" onclick="closeSourcesModal()">
+    <div class="sources-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;flex-shrink:0">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <h3>Fuentes de información</h3>
+        <button onclick="closeSourcesModal()" style="margin-left:auto;background:none;border:none;color:#fff;cursor:pointer;font-size:20px;line-height:1;">✕</button>
+      </div>
+      <div class="sources-modal-body">
+        <p class="sources-intro">AgentIA Aduanas consulta las siguientes fuentes oficiales para responder sus preguntas:</p>
+
+        <div class="source-item">
+          <div class="source-item-logo source-logo-aduana">SNA</div>
+          <div class="source-item-info">
+            <strong>Servicio Nacional de Aduanas</strong>
+            <span>aduana.cl</span>
+            <p>Circulares, resoluciones exentas, procedimientos operativos, aranceles y normativa del SNA. Fuente principal para operativa aduanera chilena.</p>
+          </div>
+        </div>
+
+        <div class="source-item">
+          <div class="source-item-logo source-logo-bcn">BCN</div>
+          <div class="source-item-info">
+            <strong>Biblioteca del Congreso Nacional</strong>
+            <span>leychile.cl</span>
+            <p>Texto oficial de leyes y decretos: Ordenanza de Aduanas (DFL N°30/2005), DL N°825 (IVA), Ley N°18.164 y tratados de facilitación del comercio OMC.</p>
+          </div>
+        </div>
+
+        <div class="source-item">
+          <div class="source-item-logo source-logo-sii">SII</div>
+          <div class="source-item-info">
+            <strong>Servicio de Impuestos Internos</strong>
+            <span>sii.cl</span>
+            <p>Normativa tributaria vinculada a importaciones: IVA, derechos de importación e impuesto adicional a bienes importados.</p>
+          </div>
+        </div>
+
+        <div class="source-item">
+          <div class="source-item-logo source-logo-interno">INT</div>
+          <div class="source-item-info">
+            <strong>Documentos internos</strong>
+            <span>Cargados por su organización</span>
+            <p>Contratos, procedimientos y documentos propios subidos al sistema. Solo visibles para su organización y priorizados cuando son relevantes para la consulta.</p>
+          </div>
+        </div>
+
+        <div class="sources-footer">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0;opacity:.6">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          Cuando ninguna fuente indexada contiene información suficiente, el sistema responde con conocimiento de la IA e indica explícitamente que la respuesta no proviene de la base de datos.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PDF PREVIEW ==================== -->
+  <div class="modal-overlay" id="pdfPreviewOverlay" style="display:none" onclick="closePdfPreview()">
+    <div class="pdf-preview-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <h3 id="pdfPreviewTitle"></h3>
+        <button onclick="closePdfPreview()" style="margin-left:auto;background:none;border:none;color:#fff;cursor:pointer;font-size:20px;line-height:1;">✕</button>
+      </div>
+      <iframe id="pdfPreviewFrame" src="" style="width:100%;height:78vh;border:none;display:block;background:#fff;"></iframe>
+    </div>
+  </div>
+
+  <script src="/frontend/js/app.js"></script>
+</body>
+</html>

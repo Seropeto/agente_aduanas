@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - chroma_data:/app/data/chroma_db
+      - uploads_data:/app/data/uploads
+      - logs_data:/app/data/logs
+
+volumes:
+  chroma_data:
+  uploads_data:
+  logs_data:
