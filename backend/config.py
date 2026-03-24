@@ -15,6 +15,8 @@ for d in [DATA_DIR, CHROMA_DIR, UPLOADS_DIR, LOGS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "contacto@toxirodigital.cloud")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # Tesseract OCR
 tessdata = os.getenv("TESSDATA_PREFIX", "")

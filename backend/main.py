@@ -17,12 +17,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.config import BASE_DIR, LOGS_DIR, UPLOADS_DIR
+from backend.config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, LOGS_DIR, UPLOADS_DIR
 from backend.indexer.document_processor import DocumentProcessor
 from backend.indexer.vectorstore import VectorStore, COLLECTION_INTERNOS
 from backend.query_logger import get_queries, get_summary, initialize_db, log_query
 from backend.rag.engine import RAGEngine
 from backend.scheduler import get_status, run_now, start_scheduler, stop_scheduler
+from backend.auth.database import initialize_auth_db, admin_exists, create_user
+from backend.auth.utils import hash_password
+from backend.auth.router import router as auth_router, get_current_user
 
 # ------------------------------------------------------------------ #
 # Configuración de logging                                             #
@@ -67,6 +70,26 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error inicializando base de logs: {e}")
 
     try:
+        initialize_auth_db()
+        # Crear usuario admin si no existe
+        if not admin_exists() and ADMIN_EMAIL and ADMIN_PASSWORD:
+            import uuid
+            from datetime import datetime, timezone
+            create_user(
+                user_id=str(uuid.uuid4()),
+                email=ADMIN_EMAIL,
+                name="Administrador",
+                company="Toxiro Digital",
+                password_hash=hash_password(ADMIN_PASSWORD),
+                role="admin",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                expires_at=None,
+            )
+            logger.info(f"Usuario admin creado: {ADMIN_EMAIL}")
+    except Exception as e:
+        logger.error(f"Error inicializando auth: {e}")
+
+    try:
         start_scheduler()
         logger.info("Scheduler iniciado")
     except Exception as e:
@@ -91,6 +114,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Auth router
+app.include_router(auth_router)
 
 # CORS
 app.add_middleware(

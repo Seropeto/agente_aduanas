@@ -8,6 +8,64 @@
 </head>
 <body>
 
+  <!-- ==================== PANTALLA DE LOGIN ==================== -->
+  <div id="loginScreen" class="login-screen" style="display:none;">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        <div>
+          <span class="login-title">Agent<span class="logo-ia">IA</span> Aduanas</span>
+          <span class="login-subtitle">Chile</span>
+        </div>
+      </div>
+
+      <!-- Formulario login -->
+      <div id="loginForm">
+        <h2 class="login-heading">Iniciar sesión</h2>
+        <div id="loginError" class="login-error" style="display:none;"></div>
+        <div class="login-field">
+          <label>Correo electrónico</label>
+          <input type="email" id="loginEmail" placeholder="tu@correo.com" autocomplete="email" />
+        </div>
+        <div class="login-field">
+          <label>Contraseña</label>
+          <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <button class="login-btn" id="loginBtn" onclick="doLogin()">Ingresar</button>
+        <div class="login-demo-link">
+          ¿No tienes cuenta? <a href="#" onclick="showDemoForm()">Solicitar acceso demo</a>
+        </div>
+      </div>
+
+      <!-- Formulario solicitud demo -->
+      <div id="demoForm" style="display:none;">
+        <h2 class="login-heading">Solicitar acceso demo</h2>
+        <p class="login-demo-desc">Prueba el sistema gratis por 3 días. Te enviaremos las credenciales a tu correo.</p>
+        <div id="demoError" class="login-error" style="display:none;"></div>
+        <div id="demoSuccess" class="login-success" style="display:none;"></div>
+        <div class="login-field">
+          <label>Nombre completo</label>
+          <input type="text" id="demoName" placeholder="Juan Pérez" />
+        </div>
+        <div class="login-field">
+          <label>Empresa / Agencia</label>
+          <input type="text" id="demoCompany" placeholder="Agencia de Aduanas S.A." />
+        </div>
+        <div class="login-field">
+          <label>Correo electrónico</label>
+          <input type="email" id="demoEmail" placeholder="tu@correo.com" />
+        </div>
+        <button class="login-btn" id="demoBtn" onclick="doRequestDemo()">Solicitar acceso</button>
+        <div class="login-demo-link">
+          <a href="#" onclick="showLoginForm()">← Volver al login</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== SIDEBAR ==================== -->
   <aside class="sidebar" id="sidebar">
 

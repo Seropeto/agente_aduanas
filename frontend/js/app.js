@@ -5,6 +5,138 @@
 
 'use strict';
 
+// ================================================================
+// Autenticación
+// ================================================================
+const auth = {
+  token: localStorage.getItem('auth_token'),
+  user: JSON.parse(localStorage.getItem('auth_user') || 'null'),
+};
+
+function authHeaders() {
+  return auth.token ? { 'Authorization': `Bearer ${auth.token}` } : {};
+}
+
+function isLoggedIn() {
+  return !!auth.token && !!auth.user;
+}
+
+function saveAuth(token, user) {
+  auth.token = token;
+  auth.user = user;
+  localStorage.setItem('auth_token', token);
+  localStorage.setItem('auth_user', JSON.stringify(user));
+}
+
+function clearAuth() {
+  auth.token = null;
+  auth.user = null;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+}
+
+function showLoginForm() {
+  document.getElementById('demoForm').style.display = 'none';
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('loginError').style.display = 'none';
+}
+
+function showDemoForm() {
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('demoForm').style.display = 'block';
+  document.getElementById('demoError').style.display = 'none';
+  document.getElementById('demoSuccess').style.display = 'none';
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errorEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+
+  errorEl.style.display = 'none';
+  if (!email || !password) {
+    errorEl.textContent = 'Ingresa tu correo y contraseña.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Ingresando...';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = data.detail || 'Error al iniciar sesión.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    saveAuth(data.access_token, data.user);
+    document.getElementById('loginScreen').style.display = 'none';
+    initApp();
+  } catch (e) {
+    errorEl.textContent = 'Error de conexión. Intenta nuevamente.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Ingresar';
+  }
+}
+
+async function doRequestDemo() {
+  const name = document.getElementById('demoName').value.trim();
+  const company = document.getElementById('demoCompany').value.trim();
+  const email = document.getElementById('demoEmail').value.trim();
+  const errorEl = document.getElementById('demoError');
+  const successEl = document.getElementById('demoSuccess');
+  const btn = document.getElementById('demoBtn');
+
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  if (!name || !company || !email) {
+    errorEl.textContent = 'Completa todos los campos.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  try {
+    const res = await fetch('/api/auth/demo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, company, email }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = data.detail || 'Error al solicitar acceso.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    successEl.textContent = '¡Listo! Revisa tu correo con las credenciales de acceso.';
+    successEl.style.display = 'block';
+    btn.style.display = 'none';
+  } catch (e) {
+    errorEl.textContent = 'Error de conexión. Intenta nuevamente.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    if (btn.style.display !== 'none') btn.textContent = 'Solicitar acceso';
+  }
+}
+
+function logout() {
+  clearAuth();
+  location.reload();
+}
+
 // Reemplaza una miniatura rota con el ícono genérico de documento
 function imgThumbError(img) {
   const parent = img.parentElement;
@@ -48,11 +180,27 @@ const CONTENT_TYPE_LABELS = {
 // ================================================================
 // Inicialización
 // ================================================================
-document.addEventListener('DOMContentLoaded', () => {
+function initApp() {
   loadDocuments();
   loadScraperStatus();
   startScraperPolling();
   focusChatInput();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (!isLoggedIn()) {
+    document.getElementById('loginScreen').style.display = 'flex';
+  } else {
+    initApp();
+  }
+
+  // Enter en los inputs de login
+  document.getElementById('loginPassword').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('loginEmail').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
 });
 
 // ================================================================
