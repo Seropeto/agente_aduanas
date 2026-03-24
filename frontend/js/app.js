@@ -198,6 +198,13 @@ const CONTENT_TYPE_LABELS = {
 // Inicialización
 // ================================================================
 function initApp() {
+  // Mostrar info del usuario en sidebar
+  if (auth.user) {
+    const nameEl = document.getElementById('sidebarUserName');
+    const roleEl = document.getElementById('sidebarUserRole');
+    if (nameEl) nameEl.textContent = auth.user.name || auth.user.email;
+    if (roleEl) roleEl.textContent = auth.user.role === 'admin' ? 'Administrador' : 'Demo';
+  }
   loadDocuments();
   loadScraperStatus();
   startScraperPolling();
