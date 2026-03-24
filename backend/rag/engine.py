@@ -261,6 +261,7 @@ Responde usando tu conocimiento sobre normativa aduanera chilena, siendo CONCRET
         self,
         query: str,
         filter_collection: str = "all",
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Procesa una consulta RAG: recupera contexto y genera respuesta con Claude.
@@ -298,10 +299,15 @@ Responde usando tu conocimiento sobre normativa aduanera chilena, siendo CONCRET
         all_results = []
         for collection_name, top_k in collection_strategy:
             try:
+                # Filtrar documentos internos por usuario
+                meta_filter = None
+                if collection_name == COLLECTION_INTERNOS and user_id:
+                    meta_filter = {"user_id": user_id}
                 results = self.vector_store.search(
                     query=query,
                     collection_name=collection_name,
                     top_k=top_k,
+                    filter_metadata=meta_filter,
                 )
                 all_results.extend(results)
             except Exception as e:

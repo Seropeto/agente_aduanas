@@ -404,7 +404,7 @@ class VectorStore:
 
         return False
 
-    def list_documents(self, collection_name: str = COLLECTION_INTERNOS) -> list[dict[str, Any]]:
+    def list_documents(self, collection_name: str = COLLECTION_INTERNOS, user_id: str | None = None) -> list[dict[str, Any]]:
         """
         Lista los documentos únicos (no chunks) en una colección.
 
@@ -423,10 +423,10 @@ class VectorStore:
                 return []
 
             # Obtener todos los chunks con sus metadatas
-            results = collection.get(
-                limit=min(count, 10000),
-                include=["metadatas"],
-            )
+            get_params = {"limit": min(count, 10000), "include": ["metadatas"]}
+            if user_id:
+                get_params["where"] = {"user_id": user_id}
+            results = collection.get(**get_params)
 
             if not results or not results.get("metadatas"):
                 return []

@@ -137,6 +137,23 @@ function logout() {
   location.reload();
 }
 
+// Wrapper de fetch que agrega token y maneja 401 automáticamente
+async function apiFetch(url, options = {}) {
+  const headers = { ...authHeaders(), ...(options.headers || {}) };
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401 || res.status === 403) {
+    const data = await res.json().catch(() => ({}));
+    // Si el acceso demo expiró, mostrar mensaje antes de redirigir
+    if (data.detail && data.detail.includes('expirado')) {
+      alert(data.detail);
+    }
+    clearAuth();
+    location.reload();
+    return res;
+  }
+  return res;
+}
+
 // Reemplaza una miniatura rota con el ícono genérico de documento
 function imgThumbError(img) {
   const parent = img.parentElement;
@@ -227,7 +244,7 @@ async function sendMessage() {
   setInputEnabled(false);
 
   try {
-    const response = await fetch('/api/chat', {
+    const response = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -518,7 +535,7 @@ function renderTable(lines) {
 // ================================================================
 async function loadDocuments() {
   try {
-    const response = await fetch('/api/documents');
+    const response = await apiFetch('/api/documents');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     state.documents = data.documents || [];
@@ -702,7 +719,7 @@ async function deleteDocument(docId, docName) {
   }
 
   try {
-    const response = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
+    const response = await apiFetch(`/api/documents/${encodeURIComponent(docId)}`, {
       method: 'DELETE',
     });
 
@@ -853,7 +870,7 @@ async function doUpload(file, meta, current, total) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
-    const response = await fetch('/api/documents/upload', {
+    const response = await apiFetch('/api/documents/upload', {
       method: 'POST',
       body: formData,
       signal: controller.signal,
@@ -885,7 +902,7 @@ async function doUpload(file, meta, current, total) {
 // ================================================================
 async function loadScraperStatus() {
   try {
-    const response = await fetch('/api/scraper/status');
+    const response = await apiFetch('/api/scraper/status');
     if (!response.ok) return;
 
     const data = await response.json();
@@ -946,7 +963,7 @@ async function triggerScraper() {
   btn.classList.add('spinning');
 
   try {
-    const response = await fetch('/api/scraper/run', { method: 'POST' });
+    const response = await apiFetch('/api/scraper/run', { method: 'POST' });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Error desconocido' }));
       throw new Error(err.detail || `Error ${response.status}`);
@@ -980,7 +997,7 @@ async function resetNormativa() {
   btn.textContent = 'Limpiando…';
 
   try {
-    const response = await fetch('/api/scraper/reset', { method: 'POST' });
+    const response = await apiFetch('/api/scraper/reset', { method: 'POST' });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Error desconocido' }));
       throw new Error(err.detail || `Error ${response.status}`);

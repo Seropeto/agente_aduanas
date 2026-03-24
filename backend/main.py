@@ -181,7 +181,7 @@ def _get_client_ip(request: Request) -> str:
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] = None):
+async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """
     Endpoint principal de consulta RAG.
     Recibe una pregunta y retorna la respuesta de Claude con fuentes.
@@ -196,6 +196,7 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
         result = await rag_engine.query(
             query=body.query,
             filter_collection=body.filter,
+            user_id=current_user["id"],
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -228,10 +229,10 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
 # Rutas: Documentos internos                                          #
 # ------------------------------------------------------------------ #
 @app.get("/api/documents")
-async def list_documents():
-    """Lista todos los documentos internos indexados."""
+async def list_documents(current_user: dict = Depends(get_current_user)):
+    """Lista los documentos internos del usuario autenticado."""
     try:
-        docs = vector_store.list_documents(COLLECTION_INTERNOS)
+        docs = vector_store.list_documents(COLLECTION_INTERNOS, user_id=current_user["id"])
         return {"documents": docs, "total": len(docs)}
     except Exception as e:
         logger.error(f"Error listando documentos: {e}")
@@ -245,6 +246,7 @@ async def upload_document(
     content_type_override: Optional[str] = Form(None, alias="content_type"),
     date: Optional[str] = Form(None),
     source: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Sube e indexa un documento interno (PDF, DOCX o TXT).
@@ -308,6 +310,7 @@ async def upload_document(
             "doc_id": file_hash,
             "url": "",
             "date": date or "",
+            "user_id": current_user["id"],
         }
 
         loop = asyncio.get_running_loop()
