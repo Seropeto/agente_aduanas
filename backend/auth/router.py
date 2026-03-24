@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from .database import (
     admin_exists,
@@ -41,7 +41,7 @@ class LoginRequest(BaseModel):
 class DemoRequest(BaseModel):
     name: str
     company: str
-    email: str
+    email: str  # validación básica en frontend
 
 
 class TokenResponse(BaseModel):
