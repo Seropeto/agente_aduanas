@@ -201,7 +201,7 @@ html, body {
    ================================================================ */
 body {
   display: flex;
-  height: 100vh;
+  height: 100dvh;
 }
 
 /* ---- Sidebar ---- */
@@ -211,7 +211,7 @@ body {
   background: var(--navy);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   overflow-x: hidden;
   transition: width var(--transition), min-width var(--transition);
@@ -230,7 +230,7 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -1818,6 +1818,22 @@ body {
   display: none !important;
 }
 
+/* Botón cerrar sidebar — solo visible en móvil */
+.sidebar-close-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  padding: 6px;
+  border-radius: 6px;
+  line-height: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.sidebar-close-btn:hover { color: #fff; }
+.sidebar-close-btn svg { width: 20px; height: 20px; }
+
 /* ================================================================
    RESPONSIVO
    ================================================================ */
@@ -1839,11 +1855,15 @@ body {
     --sidebar-width: 280px;
   }
 
+  .sidebar-close-btn {
+    display: flex;
+  }
+
   .sidebar {
     position: fixed;
     left: 0;
     top: 0;
-    height: 100%;
+    height: 100dvh;
     z-index: 200;
     transform: translateX(0);
     transition: transform var(--transition);
@@ -1858,6 +1878,7 @@ body {
 
   .main-content {
     width: 100%;
+    height: 100dvh;
   }
 
   .chat-area {
@@ -1870,7 +1891,7 @@ body {
   }
 
   .chat-input-area {
-    padding: 10px 16px 14px;
+    padding: 10px 16px max(14px, env(safe-area-inset-bottom));
   }
 
   .welcome-screen {
@@ -1885,15 +1906,15 @@ body {
 
 /* Landscape móvil — fix input recortado y sidebar */
 @media (max-width: 900px) and (orientation: landscape) {
-  :root {
-    --input-area-height: 80px;
+  .sidebar-close-btn {
+    display: flex;
   }
 
   .sidebar {
     position: fixed;
     left: 0;
     top: 0;
-    height: 100%;
+    height: 100dvh;
     z-index: 200;
     transform: translateX(0);
     transition: transform var(--transition);
@@ -1911,12 +1932,8 @@ body {
     height: 100dvh;
   }
 
-  .chat-container {
-    height: 100dvh;
-  }
-
   .chat-input-area {
-    padding: 6px 16px 8px;
+    padding: 6px 16px max(8px, env(safe-area-inset-bottom));
     flex-shrink: 0;
   }
 
