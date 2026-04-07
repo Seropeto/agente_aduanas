@@ -202,6 +202,7 @@ html, body {
 body {
   display: flex;
   height: 100dvh;
+  height: var(--real-vh, 100dvh);
 }
 
 /* ---- Sidebar ---- */
@@ -212,6 +213,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  height: var(--real-vh, 100dvh);
   overflow-y: auto;
   overflow-x: hidden;
   transition: width var(--transition), min-width var(--transition);
@@ -231,6 +233,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  height: var(--real-vh, 100dvh);
   overflow: hidden;
   background: var(--bg);
 }
@@ -244,6 +247,8 @@ body {
   padding: 20px 16px 16px;
   border-bottom: 1px solid var(--border-nav);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 .logo-container {

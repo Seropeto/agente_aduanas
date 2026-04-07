@@ -6,6 +6,20 @@
 'use strict';
 
 // ================================================================
+// Fix altura real en mobile (Android Chrome / Safari iOS)
+// Usa visualViewport para evitar que la barra del browser recorte el layout
+// ================================================================
+function updateRealVH() {
+  const h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+  document.documentElement.style.setProperty('--real-vh', h + 'px');
+}
+updateRealVH();
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateRealVH);
+}
+window.addEventListener('resize', updateRealVH);
+
+// ================================================================
 // Autenticación
 // ================================================================
 const auth = {
