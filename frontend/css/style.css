@@ -1821,6 +1821,19 @@ body {
 /* ================================================================
    RESPONSIVO
    ================================================================ */
+
+/* Overlay para cerrar sidebar tocando fuera (móvil) */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 199;
+}
+.sidebar-overlay.active {
+  display: block;
+}
+
 @media (max-width: 768px) {
   :root {
     --sidebar-width: 280px;
@@ -1830,7 +1843,7 @@ body {
     position: fixed;
     left: 0;
     top: 0;
-    height: 100vh;
+    height: 100%;
     z-index: 200;
     transform: translateX(0);
     transition: transform var(--transition);
@@ -1867,5 +1880,55 @@ body {
   .query-chip {
     font-size: 11px;
     padding: 6px 12px;
+  }
+}
+
+/* Landscape móvil — fix input recortado y sidebar */
+@media (max-width: 900px) and (orientation: landscape) {
+  :root {
+    --input-area-height: 80px;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100%;
+    z-index: 200;
+    transform: translateX(0);
+    transition: transform var(--transition);
+    overflow-y: auto;
+  }
+
+  .sidebar.collapsed {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+    transform: translateX(-100%);
+  }
+
+  .main-content {
+    width: 100%;
+    height: 100dvh;
+  }
+
+  .chat-container {
+    height: 100dvh;
+  }
+
+  .chat-input-area {
+    padding: 6px 16px 8px;
+    flex-shrink: 0;
+  }
+
+  .input-hint {
+    display: none;
+  }
+
+  .chat-area {
+    padding: 10px 16px;
+  }
+
+  .welcome-screen {
+    padding: 12px;
   }
 }

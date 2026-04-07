@@ -205,6 +205,7 @@ function initApp() {
     if (nameEl) nameEl.textContent = auth.user.name || auth.user.email;
     if (roleEl) roleEl.textContent = auth.user.role === 'admin' ? 'Administrador' : 'Demo';
   }
+  initSidebarMobile();
   loadDocuments();
   loadScraperStatus();
   startScraperPolling();
@@ -1039,15 +1040,42 @@ function setFilter(filter, buttonEl) {
 // ================================================================
 // Sidebar toggle
 // ================================================================
+function isMobile() {
+  return window.innerWidth <= 768 || (window.innerWidth <= 900 && window.innerHeight < window.innerWidth);
+}
+
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
   state.sidebarOpen = !state.sidebarOpen;
   if (state.sidebarOpen) {
     sidebar.classList.remove('collapsed');
+    if (overlay && isMobile()) overlay.classList.add('active');
   } else {
     sidebar.classList.add('collapsed');
+    if (overlay) overlay.classList.remove('active');
   }
 }
+
+function initSidebarMobile() {
+  if (isMobile()) {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.add('collapsed');
+    state.sidebarOpen = false;
+    if (overlay) overlay.classList.remove('active');
+  }
+}
+
+window.addEventListener('resize', () => {
+  const overlay = document.getElementById('sidebarOverlay');
+  if (!isMobile() && overlay) {
+    overlay.classList.remove('active');
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.remove('collapsed');
+    state.sidebarOpen = true;
+  }
+});
 
 // ================================================================
 // Utilidades de UI
