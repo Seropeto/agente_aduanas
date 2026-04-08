@@ -1055,39 +1055,67 @@ function setFilter(filter, buttonEl) {
 // Sidebar toggle
 // ================================================================
 function isMobile() {
-  return window.innerWidth <= 768 || (window.innerWidth <= 900 && window.innerHeight < window.innerWidth);
+  return window.innerWidth <= 900;
+}
+
+function collapseSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  sidebar.classList.add('collapsed');
+  state.sidebarOpen = false;
+  if (overlay) overlay.classList.remove('active');
+}
+
+function expandSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  sidebar.classList.remove('collapsed');
+  state.sidebarOpen = true;
+  if (overlay && isMobile()) overlay.classList.add('active');
 }
 
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebarOverlay');
-  state.sidebarOpen = !state.sidebarOpen;
   if (state.sidebarOpen) {
-    sidebar.classList.remove('collapsed');
-    if (overlay && isMobile()) overlay.classList.add('active');
+    collapseSidebar();
   } else {
-    sidebar.classList.add('collapsed');
-    if (overlay) overlay.classList.remove('active');
+    expandSidebar();
   }
 }
 
 function initSidebarMobile() {
+  // En móvil siempre arranca colapsado
   if (isMobile()) {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebarOverlay');
-    sidebar.classList.add('collapsed');
-    state.sidebarOpen = false;
-    if (overlay) overlay.classList.remove('active');
+    collapseSidebar();
   }
 }
 
+// Al hacer foco en cualquier elemento fuera del sidebar, colapsar en móvil
+document.addEventListener('focusin', (e) => {
+  if (!isMobile() || !state.sidebarOpen) return;
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar.contains(e.target)) {
+    collapseSidebar();
+  }
+});
+
+// Al tocar fuera del sidebar en móvil (touchstart), colapsar
+document.addEventListener('touchstart', (e) => {
+  if (!isMobile() || !state.sidebarOpen) return;
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar.contains(e.target)) {
+    collapseSidebar();
+  }
+}, { passive: true });
+
 window.addEventListener('resize', () => {
-  const overlay = document.getElementById('sidebarOverlay');
-  if (!isMobile() && overlay) {
-    overlay.classList.remove('active');
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.remove('collapsed');
-    state.sidebarOpen = true;
+  if (!isMobile()) {
+    // En desktop siempre visible
+    expandSidebar();
+    const overlay = document.getElementById('sidebarOverlay');
+    if (overlay) overlay.classList.remove('active');
+  } else {
+    // Al rotar a móvil, colapsar
+    collapseSidebar();
   }
 });
 
