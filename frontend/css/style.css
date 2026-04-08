@@ -2236,21 +2236,24 @@ body {
 
 /* Botones de acción en tabla */
 .btn-action {
-  padding: 5px 10px;
+  padding: 7px 14px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
   transition: all 0.15s;
   margin-right: 4px;
 }
-.btn-action:hover { background: var(--bg-card); color: var(--text-primary); }
-.btn-action.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-action:hover { background: #e2e8f0; color: #1e293b; }
+.btn-action.primary { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+.btn-action.primary:hover { background: #1d4ed8; }
 .btn-action.danger  { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
+.btn-action.danger:hover { background: #fecaca; }
 .btn-action.success { background: #dcfce7; color: #16a34a; border-color: #bbf7d0; }
+.btn-action.success:hover { background: #bbf7d0; }
 
 /* Modal admin */
 .admin-modal-overlay {
