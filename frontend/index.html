@@ -245,6 +245,12 @@
         <span class="sidebar-user-name" id="sidebarUserName">—</span>
         <span class="sidebar-user-role" id="sidebarUserRole">—</span>
       </div>
+      <button class="btn-logout" onclick="openChangePasswordModal()" title="Cambiar contraseña" style="margin-right:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </button>
       <button class="btn-logout" onclick="logout()" title="Cerrar sesión">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -550,6 +556,39 @@
         <button onclick="closePdfPreview()" style="margin-left:auto;background:none;border:none;color:#fff;cursor:pointer;font-size:20px;line-height:1;">✕</button>
       </div>
       <iframe id="pdfPreviewFrame" src="" style="width:100%;height:78vh;border:none;display:block;background:#fff;"></iframe>
+    </div>
+  </div>
+
+  <!-- Modal: Cambiar contraseña -->
+  <div class="modal-overlay" id="changePasswordModal" style="display:none" onclick="closeChangePasswordModal()">
+    <div class="modal-card" style="max-width:400px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-header-info">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;flex-shrink:0">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span>Cambiar contraseña</span>
+        </div>
+        <button class="modal-close" onclick="closeChangePasswordModal()">✕</button>
+      </div>
+      <div style="padding:24px;display:flex;flex-direction:column;gap:14px;">
+        <div id="changePasswordError" class="login-error" style="display:none;"></div>
+        <div id="changePasswordSuccess" class="login-success" style="display:none;"></div>
+        <div class="login-field">
+          <label>Contraseña actual</label>
+          <input type="password" id="currentPassword" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="login-field">
+          <label>Nueva contraseña</label>
+          <input type="password" id="newPassword" placeholder="Mínimo 8 caracteres" autocomplete="new-password" />
+        </div>
+        <div class="login-field">
+          <label>Confirmar nueva contraseña</label>
+          <input type="password" id="confirmPassword" placeholder="Repite la nueva contraseña" autocomplete="new-password" />
+        </div>
+        <button class="login-btn" id="changePasswordBtn" onclick="doChangePassword()">Cambiar contraseña</button>
+      </div>
     </div>
   </div>
 

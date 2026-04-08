@@ -151,6 +151,79 @@ function logout() {
   location.reload();
 }
 
+// ================================================================
+// Cambiar contraseña
+// ================================================================
+function openChangePasswordModal() {
+  document.getElementById('changePasswordModal').style.display = 'flex';
+  document.getElementById('changePasswordError').style.display = 'none';
+  document.getElementById('changePasswordSuccess').style.display = 'none';
+  document.getElementById('currentPassword').value = '';
+  document.getElementById('newPassword').value = '';
+  document.getElementById('confirmPassword').value = '';
+}
+
+function closeChangePasswordModal() {
+  document.getElementById('changePasswordModal').style.display = 'none';
+}
+
+async function doChangePassword() {
+  const current = document.getElementById('currentPassword').value;
+  const newPwd = document.getElementById('newPassword').value;
+  const confirm = document.getElementById('confirmPassword').value;
+  const errorEl = document.getElementById('changePasswordError');
+  const successEl = document.getElementById('changePasswordSuccess');
+  const btn = document.getElementById('changePasswordBtn');
+
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  if (!current || !newPwd || !confirm) {
+    errorEl.textContent = 'Completa todos los campos.';
+    errorEl.style.display = 'block';
+    return;
+  }
+  if (newPwd.length < 8) {
+    errorEl.textContent = 'La nueva contraseña debe tener al menos 8 caracteres.';
+    errorEl.style.display = 'block';
+    return;
+  }
+  if (newPwd !== confirm) {
+    errorEl.textContent = 'Las contraseñas no coinciden.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  try {
+    const res = await apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: current, new_password: newPwd }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = data.detail || 'Error al cambiar la contraseña.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    successEl.textContent = 'Contraseña actualizada correctamente.';
+    successEl.style.display = 'block';
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    setTimeout(closeChangePasswordModal, 2000);
+  } catch (e) {
+    errorEl.textContent = 'Error de conexión.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Cambiar contraseña';
+  }
+}
+
 // Wrapper de fetch que agrega token y maneja 401 automáticamente
 async function apiFetch(url, options = {}) {
   const headers = { ...authHeaders(), ...(options.headers || {}) };

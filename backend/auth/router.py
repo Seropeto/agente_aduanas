@@ -15,6 +15,7 @@ from .database import (
     get_user_by_email,
     get_user_by_id,
     initialize_auth_db,
+    update_password,
 )
 from .utils import (
     create_access_token,
@@ -48,6 +49,11 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 # --- Dependency: usuario autenticado ---
@@ -158,3 +164,18 @@ async def get_me(user: dict = Depends(get_current_user)):
         "role": user["role"],
         "expires_at": user["expires_at"],
     }
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: dict = Depends(get_current_user),
+):
+    if not verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 8 caracteres")
+
+    update_password(user["id"], hash_password(body.new_password))
+    return {"message": "Contraseña actualizada correctamente"}

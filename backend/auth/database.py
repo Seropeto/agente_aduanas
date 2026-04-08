@@ -105,6 +105,15 @@ def admin_exists() -> bool:
 # BILLING — CRUD                                                       #
 # ------------------------------------------------------------------ #
 
+def update_password(user_id: str, new_password_hash: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (new_password_hash, user_id)
+        )
+        conn.commit()
+
+
 def get_all_users() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
