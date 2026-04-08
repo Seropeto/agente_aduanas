@@ -1641,6 +1641,28 @@ body {
   color: #fff;
 }
 
+.modal-header-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  padding: 4px;
+  border-radius: 6px;
+  line-height: 0;
+  flex-shrink: 0;
+  font-size: 18px;
+  transition: color 0.15s;
+}
+.modal-close:hover { color: #fff; }
+
 .modal-header svg {
   width: 18px;
   height: 18px;
