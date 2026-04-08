@@ -664,7 +664,7 @@ function renderExplorerBody() {
         ${thumb}
         <div class="explorer-file-info">
           <span class="explorer-file-name" title="${escapeAttr(doc.title || doc.filename)}">${escapeHtml(truncate(doc.title || doc.filename, 28))}</span>
-          <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} chunks${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
+          <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} fragmentos${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
         </div>
         <button class="explorer-delete-btn" onclick="event.stopPropagation();deleteDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Eliminar">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -678,7 +678,7 @@ function renderExplorerBody() {
         ${icon}
         <div class="explorer-list-info">
           <span class="explorer-file-name" title="${escapeAttr(doc.title || doc.filename)}">${escapeHtml(truncate(doc.title || doc.filename, 40))}</span>
-          <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} chunks${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
+          <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} fragmentos${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
         </div>
         <button class="explorer-delete-btn" onclick="event.stopPropagation();deleteDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Eliminar">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -905,7 +905,7 @@ async function doUpload(file, meta, current, total) {
     }
 
     const data = await response.json();
-    showToast(`"${meta.title}" indexado correctamente (${data.chunks_created} chunks)`, 'success');
+    showToast(`"${meta.title}" indexado correctamente (${data.chunks_created} fragmentos)`, 'success');
     await loadDocuments();
 
   } catch (error) {
@@ -966,7 +966,7 @@ function updateScraperStatusUI(data) {
 
   // Documentos totales
   totalDocs.textContent = data.total_docs !== undefined
-    ? data.total_docs.toLocaleString('es-CL') + ' chunks'
+    ? data.total_docs.toLocaleString('es-CL') + ' fragmentos indexados'
     : '—';
 
   // Fechas
