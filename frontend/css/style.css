@@ -2271,7 +2271,9 @@ body {
   width: 100%;
   max-width: 520px;
   max-height: 90vh;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 20px 60px rgba(0,0,0,0.3);
 }
 
@@ -2281,6 +2283,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .admin-modal-header h3 {
@@ -2290,11 +2293,16 @@ body {
   color: var(--text-primary);
 }
 
-.admin-modal-body { padding: 24px; }
+.admin-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
 .admin-modal-footer {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
   display: flex;
+  flex-shrink: 0;
   gap: 10px;
   justify-content: flex-end;
 }
