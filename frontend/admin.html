@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentIA — Panel de Administración</title>
+  <link rel="stylesheet" href="/frontend/css/style.css" />
+</head>
+<body class="admin-body">
+
+  <!-- Sidebar -->
+  <aside class="admin-sidebar">
+    <div class="admin-sidebar-logo">
+      <div class="logo-container">
+        <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        <div class="logo-text">
+          <span class="logo-title">Agent<span class="logo-ia">IA</span></span>
+          <span class="logo-subtitle">Administración</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="admin-nav">
+      <button class="admin-nav-item active" onclick="showView('clients')">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        Clientes
+      </button>
+      <a class="admin-nav-item" href="/">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Ir al chat
+      </a>
+    </nav>
+
+    <div class="admin-sidebar-footer">
+      <div class="sidebar-user">
+        <div class="sidebar-user-info">
+          <span class="sidebar-user-name" id="adminUserName">—</span>
+          <span class="sidebar-user-role">Administrador</span>
+        </div>
+        <button class="sidebar-toggle" onclick="doLogout()" title="Cerrar sesión">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="admin-main">
+    <header class="admin-header">
+      <h1 id="viewTitle">Clientes</h1>
+      <button class="btn btn-primary" onclick="openCreateModal()" id="btnCreateClient">
+        + Nuevo cliente
+      </button>
+    </header>
+
+    <div class="admin-content">
+
+      <!-- Stats -->
+      <div class="admin-stats" id="adminStats"></div>
+
+      <!-- Tabla de clientes -->
+      <div class="admin-table-wrap" id="clientsView">
+        <div class="admin-table-header">
+          <h2>Todos los clientes</h2>
+          <button class="btn-action" onclick="loadClients()">↻ Actualizar</button>
+        </div>
+        <div id="clientsTableBody">
+          <div class="admin-empty">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+            </svg>
+            <p>Cargando clientes...</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Modal: Crear cliente -->
+  <div class="admin-modal-overlay" id="createModal" style="display:none" onclick="closeCreateModal()">
+    <div class="admin-modal" onclick="event.stopPropagation()">
+      <div class="admin-modal-header">
+        <h3>Nuevo cliente</h3>
+        <button class="sidebar-toggle" onclick="closeCreateModal()">✕</button>
+      </div>
+      <div class="admin-modal-body">
+        <div id="createError" class="login-error" style="display:none;"></div>
+        <div class="admin-form-group">
+          <label>Nombre completo</label>
+          <input type="text" id="createName" placeholder="Juan Pérez" />
+        </div>
+        <div class="admin-form-group">
+          <label>Empresa</label>
+          <input type="text" id="createCompany" placeholder="Agencia de Aduanas S.A." />
+        </div>
+        <div class="admin-form-group">
+          <label>Correo electrónico</label>
+          <input type="email" id="createEmail" placeholder="cliente@empresa.cl" />
+        </div>
+        <div class="admin-form-group">
+          <label>Plan</label>
+          <select id="createPlan">
+            <option value="base">Base — 960 consultas/mes — $50 USD</option>
+            <option value="crecimiento">Crecimiento — 2.880 consultas/mes — $90 USD</option>
+            <option value="empresarial">Empresarial — 6.400 consultas/mes — $200 USD</option>
+          </select>
+        </div>
+        <div class="admin-form-group">
+          <label>Tipo de servidor</label>
+          <select id="createVps">
+            <option value="agentia">VPS contratado con AgentIA</option>
+            <option value="propio">VPS propio del cliente</option>
+          </select>
+        </div>
+      </div>
+      <div class="admin-modal-footer">
+        <button class="btn-action" onclick="closeCreateModal()">Cancelar</button>
+        <button class="btn-action primary" id="createBtn" onclick="createClient()">Crear cliente</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Editar cliente -->
+  <div class="admin-modal-overlay" id="editModal" style="display:none" onclick="closeEditModal()">
+    <div class="admin-modal" onclick="event.stopPropagation()">
+      <div class="admin-modal-header">
+        <h3 id="editModalTitle">Editar cliente</h3>
+        <button class="sidebar-toggle" onclick="closeEditModal()">✕</button>
+      </div>
+      <div class="admin-modal-body">
+        <div id="editError" class="login-error" style="display:none;"></div>
+
+        <!-- Info -->
+        <div class="admin-form-group">
+          <label>Nombre</label>
+          <input type="text" id="editName" />
+        </div>
+        <div class="admin-form-group">
+          <label>Empresa</label>
+          <input type="text" id="editCompany" />
+        </div>
+        <div class="admin-form-group">
+          <label>Tipo de servidor</label>
+          <select id="editVps">
+            <option value="agentia">VPS contratado con AgentIA</option>
+            <option value="propio">VPS propio del cliente</option>
+          </select>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0;">
+
+        <!-- Plan -->
+        <div class="admin-form-group">
+          <label>Plan</label>
+          <select id="editPlan">
+            <option value="base">Base — 960 consultas/mes — $50 USD</option>
+            <option value="crecimiento">Crecimiento — 2.880 consultas/mes — $90 USD</option>
+            <option value="empresarial">Empresarial — 6.400 consultas/mes — $200 USD</option>
+          </select>
+        </div>
+
+        <!-- Cuota actual -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px;">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">CUOTA ACTUAL</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            <div class="progress-mini-wrap" style="width:120px;">
+              <div class="progress-mini-fill" id="editProgressBar" style="width:0%"></div>
+            </div>
+            <span id="editQuotaNumbers" style="font-size:13px;color:var(--text-primary);">—</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);">Paquetes adicionales usados: <strong id="editExtraPacks">0</strong> / 2</div>
+          <div style="font-size:12px;color:var(--text-muted);">Reset: <strong id="editResetDate">—</strong></div>
+        </div>
+
+        <!-- Acciones -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-action" id="editAddPackBtn" onclick="addPackFromModal()">+ Paquete adicional (200 consultas)</button>
+          <button class="btn-action" id="editStatusBtn" onclick="toggleStatusFromModal()">Suspender</button>
+        </div>
+
+      </div>
+      <div class="admin-modal-footer">
+        <button class="btn-action" onclick="closeEditModal()">Cancelar</button>
+        <button class="btn-action primary" onclick="saveClient()">Guardar cambios</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/frontend/js/admin.js"></script>
+</body>
+</html>

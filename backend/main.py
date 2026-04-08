@@ -26,6 +26,7 @@ from backend.scheduler import get_status, run_now, start_scheduler, stop_schedul
 from backend.auth.database import initialize_auth_db, admin_exists, create_user
 from backend.auth.utils import hash_password
 from backend.auth.router import router as auth_router, get_current_user
+from backend.billing.router import router as billing_router
 
 # ------------------------------------------------------------------ #
 # Configuración de logging                                             #
@@ -118,6 +119,9 @@ app = FastAPI(
 # Auth router
 app.include_router(auth_router)
 
+# Billing router
+app.include_router(billing_router)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -190,6 +194,13 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="La consulta no puede estar vacía")
 
+    # Verificar cuota (admins y demos pasan sin restricción de cuota)
+    if current_user.get("role") not in ("admin", "demo"):
+        from backend.billing.service import check_quota
+        quota = check_quota(current_user)
+        if not quota["allowed"]:
+            raise HTTPException(status_code=429, detail=quota["reason"])
+
     client_ip = _get_client_ip(request)
     t0 = time.monotonic()
     try:
@@ -213,6 +224,11 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
             )
         except Exception:
             pass  # El log nunca debe interrumpir la respuesta
+
+        # Descontar consulta del plan (async, no bloquea la respuesta)
+        if current_user.get("role") not in ("admin", "demo"):
+            from backend.billing.service import record_query
+            asyncio.create_task(record_query(current_user["id"]))
 
         return ChatResponse(**result)
     except ValueError as e:
@@ -533,6 +549,15 @@ async def serve_upload(filename: str):
 
 if FRONTEND_DIR.exists():
     app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
+
+
+@app.get("/admin")
+async def serve_admin():
+    """Sirve el panel de administración."""
+    admin_path = FRONTEND_DIR / "admin.html"
+    if not admin_path.exists():
+        return JSONResponse(status_code=404, content={"detail": "Panel admin no encontrado"})
+    return FileResponse(str(admin_path))
 
 
 @app.get("/")

@@ -224,6 +224,59 @@ function initApp() {
   loadScraperStatus();
   startScraperPolling();
   focusChatInput();
+  // Widget de cuota solo para clientes (no admin, no demo)
+  if (auth.user && auth.user.role !== 'admin' && auth.user.role !== 'demo') {
+    loadQuota();
+  }
+  // Link al panel admin
+  if (auth.user && auth.user.role === 'admin') {
+    const adminLink = document.getElementById('adminPanelLink');
+    if (adminLink) adminLink.style.display = '';
+  }
+}
+
+async function loadQuota() {
+  try {
+    const res = await apiFetch('/api/me/quota');
+    if (!res || !res.ok) return;
+    const data = await res.json();
+
+    const section = document.getElementById('quotaSection');
+    if (section) section.style.display = '';
+
+    const pct = data.pct || 0;
+    const pctDisplay = Math.round(pct * 100);
+
+    document.getElementById('quotaPlanName').textContent = `Plan ${data.plan_name}`;
+    document.getElementById('quotaNumbers').textContent =
+      `${(data.queries_used || 0).toLocaleString('es-CL')} / ${(data.queries_limit || 0).toLocaleString('es-CL')} consultas`;
+
+    if (data.reset_date) {
+      document.getElementById('quotaResetDate').textContent =
+        `Renueva el ${new Date(data.reset_date).toLocaleDateString('es-CL')}`;
+    }
+
+    const bar = document.getElementById('quotaBarFill');
+    bar.style.width = Math.min(pctDisplay, 100) + '%';
+    bar.className = 'quota-bar-fill' +
+      (pct >= 1 ? ' danger' : pct >= 0.8 ? ' warning' : '');
+
+    const alertEl = document.getElementById('quotaAlert');
+    if (data.billing_status === 'suspendido') {
+      alertEl.style.display = '';
+      alertEl.className = 'quota-alert quota-alert--danger';
+      alertEl.textContent = 'Acceso suspendido. Contacte a Toxiro Digital.';
+      setInputEnabled(false);
+    } else if (pct >= 0.8) {
+      alertEl.style.display = '';
+      alertEl.className = 'quota-alert quota-alert--warning';
+      alertEl.textContent = `Ha consumido el ${pctDisplay}% de su cuota mensual.`;
+    } else {
+      alertEl.style.display = 'none';
+    }
+  } catch (e) {
+    // No bloquear la app si falla la cuota
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

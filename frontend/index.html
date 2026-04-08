@@ -100,6 +100,25 @@
       </button>
     </div>
 
+    <!-- Widget de cuota (visible solo para clientes, no admin/demo) -->
+    <div class="sidebar-section" id="quotaSection" style="display:none;">
+      <div class="section-header">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+        <span>Mi plan</span>
+      </div>
+      <div class="quota-card">
+        <div class="quota-plan-name" id="quotaPlanName">—</div>
+        <div class="quota-bar-wrap">
+          <div class="quota-bar-fill" id="quotaBarFill" style="width:0%"></div>
+        </div>
+        <div class="quota-numbers" id="quotaNumbers">— / — consultas</div>
+        <div class="quota-reset" id="quotaResetDate"></div>
+        <div class="quota-alert" id="quotaAlert" style="display:none;"></div>
+      </div>
+    </div>
+
     <!-- Estado del scraper -->
     <div class="sidebar-section">
       <div class="section-header">
@@ -206,6 +225,19 @@
                onchange="handleFileSelect(event)" multiple />
       </div>
     </div>
+
+    <!-- Link al panel admin (solo admin) -->
+    <a id="adminPanelLink" href="/admin" style="display:none;text-decoration:none;">
+      <div class="sidebar-section" style="padding:10px 12px;cursor:pointer;border-bottom:none;">
+        <div class="section-header" style="color:#93c5fd;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+          </svg>
+          <span style="font-size:12px;">Panel de administración</span>
+        </div>
+      </div>
+    </a>
 
     <!-- Usuario y logout -->
     <div class="sidebar-user">

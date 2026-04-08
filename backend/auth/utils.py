@@ -120,3 +120,66 @@ async def send_admin_notification(name: str, company: str, email: str) -> bool:
     </div>
     """
     return await send_email(ADMIN_EMAIL, subject, body)
+
+
+async def send_quota_alert(to: str, name: str, pct: float, plan_name: str,
+                           used: int, limit: int) -> bool:
+    subject = "AgentIA — Ha consumido el 80% de su cuota mensual"
+    pct_display = int(pct * 100)
+    body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+      <h2 style="color: #d97706;">⚠️ Alerta de consumo — AgentIA Aduanas</h2>
+      <p>Estimado/a <strong>{name}</strong>,</p>
+      <p>Ha utilizado el <strong>{pct_display}% de su cuota mensual</strong> de consultas en el plan <strong>{plan_name}</strong>.</p>
+      <div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 16px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0;"><strong>Consultas utilizadas:</strong> {used} de {limit}</p>
+        <p style="margin: 8px 0 0;"><strong>Consultas restantes:</strong> {limit - used}</p>
+      </div>
+      <p>Si necesita más consultas antes de que se renueve su plan, puede:</p>
+      <ul>
+        <li>Adquirir un paquete adicional de 200 consultas ($10 USD)</li>
+        <li>Subir al plan superior para continuar sin interrupciones</li>
+      </ul>
+      <p>Contáctenos respondiendo este correo o escribiendo a <a href="mailto:{ADMIN_EMAIL}">{ADMIN_EMAIL}</a>.</p>
+    </div>
+    """
+    return await send_email(to, subject, body)
+
+
+async def send_suspension_notice(to: str, name: str) -> bool:
+    subject = "AgentIA — Su acceso ha sido suspendido temporalmente"
+    body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+      <h2 style="color: #dc2626;">🔒 Acceso suspendido — AgentIA Aduanas</h2>
+      <p>Estimado/a <strong>{name}</strong>,</p>
+      <p>Ha alcanzado el <strong>límite mensual de consultas</strong> de su plan.</p>
+      <p>Su acceso ha sido suspendido temporalmente hasta que:</p>
+      <ul>
+        <li>Se renueve su cuota mensual (día 1 del próximo mes), o</li>
+        <li>Adquiera un paquete adicional de 200 consultas ($10 USD), o</li>
+        <li>Suba al plan superior</li>
+      </ul>
+      <p>Para reactivar su acceso de inmediato, contáctenos a <a href="mailto:{ADMIN_EMAIL}">{ADMIN_EMAIL}</a>.</p>
+    </div>
+    """
+    return await send_email(to, subject, body)
+
+
+async def send_client_credentials(to: str, name: str, company: str,
+                                   password: str, plan_name: str) -> bool:
+    subject = "AgentIA Aduanas — Credenciales de acceso"
+    body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px;">
+      <h2 style="color: #0a3b8c;">Bienvenido/a a AgentIA Aduanas</h2>
+      <p>Estimado/a <strong>{name}</strong> de <strong>{company}</strong>,</p>
+      <p>Su cuenta ha sido activada con el plan <strong>{plan_name}</strong>. A continuación sus credenciales de acceso:</p>
+      <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0;"><strong>URL:</strong> <a href="https://aduanas.toxirodigital.cloud">aduanas.toxirodigital.cloud</a></p>
+        <p style="margin: 8px 0 0;"><strong>Usuario:</strong> {to}</p>
+        <p style="margin: 8px 0 0;"><strong>Contraseña:</strong> <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px;">{password}</code></p>
+      </div>
+      <p>Le recomendamos cambiar su contraseña en el primer inicio de sesión.</p>
+      <p>Si tiene preguntas, responda este correo.</p>
+    </div>
+    """
+    return await send_email(to, subject, body)

@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from backend.config import DATA_DIR, LOGS_DIR
 
@@ -261,6 +262,17 @@ async def _scheduled_job():
         logger.error(f"Error en trabajo programado: {e}")
 
 
+async def _monthly_reset_job():
+    """Trabajo programado que resetea cuotas mensuales el día 1 de cada mes."""
+    logger.info("Ejecutando reset mensual de cuotas de usuarios")
+    try:
+        from backend.billing.service import run_monthly_reset
+        count = run_monthly_reset()
+        logger.info(f"Reset mensual completado: {count} usuarios reseteados")
+    except Exception as e:
+        logger.error(f"Error en reset mensual de cuotas: {e}")
+
+
 def start_scheduler():
     """Inicia el scheduler con el trabajo semanal de scraping."""
     global _scheduler
@@ -278,6 +290,16 @@ def start_scheduler():
         trigger=IntervalTrigger(weeks=1),
         id="weekly_scraper",
         name="Scraping semanal de normativa aduanera",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+    # Reset mensual de cuotas — día 1 de cada mes a las 00:05
+    _scheduler.add_job(
+        _monthly_reset_job,
+        trigger=CronTrigger(day=1, hour=0, minute=5, timezone="America/Santiago"),
+        id="monthly_quota_reset",
+        name="Reset mensual de cuotas de usuarios",
         replace_existing=True,
         max_instances=1,
     )
