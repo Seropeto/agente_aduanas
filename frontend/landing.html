@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agente IA para Operaciones Aduaneras | Toxiro Digital</title>
+  <meta name="description" content="Consulta normativa aduanera chilena + tus propios documentos con IA. Demo gratis por 3 días.">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Header / Navbar */
+    header {
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(10px);
+      padding: 20px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .navbar {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 24px;
+      font-weight: 900;
+      background: linear-gradient(135deg, #4d9fff 0%, #fff 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 40px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: #cbd5e1;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.3s;
+    }
+
+    .nav-links a:hover {
+      color: #4d9fff;
+    }
+
+    .cta-btn {
+      background: #2563eb;
+      color: #fff;
+      padding: 12px 28px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .cta-btn:hover {
+      background: #1d4ed8;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, #041e42 0%, #0a3b8c 50%, #0d52b5 100%);
+      padding: 120px 40px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -10%;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: rgba(77, 159, 255, 0.1);
+      pointer-events: none;
+    }
+
+    .hero-content {
+      max-width: 800px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 2;
+    }
+
+    .hero h1 {
+      font-size: 56px;
+      font-weight: 900;
+      margin-bottom: 24px;
+      line-height: 1.1;
+    }
+
+    .hero h1 span {
+      color: #4d9fff;
+    }
+
+    .hero p {
+      font-size: 20px;
+      color: rgba(226, 232, 240, 0.8);
+      margin-bottom: 40px;
+    }
+
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: #fff;
+      padding: 16px 40px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: #4d9fff;
+      padding: 16px 40px;
+      border-radius: 8px;
+      border: 2px solid #4d9fff;
+      font-weight: 600;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(77, 159, 255, 0.1);
+    }
+
+    /* Section spacing */
+    section {
+      padding: 100px 40px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-title {
+      font-size: 42px;
+      font-weight: 900;
+      margin-bottom: 60px;
+      text-align: center;
+    }
+
+    .section-title span {
+      color: #4d9fff;
+    }
+
+    /* Problem Section */
+    .problem {
+      background: #0f172a;
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+    }
+
+    .problem-content h3 {
+      font-size: 32px;
+      margin-bottom: 24px;
+      line-height: 1.2;
+    }
+
+    .problem-content p {
+      font-size: 18px;
+      color: rgba(226, 232, 240, 0.7);
+      margin-bottom: 20px;
+    }
+
+    .challenge-list {
+      list-style: none;
+      margin-top: 40px;
+    }
+
+    .challenge-item {
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .challenge-item:last-child {
+      border-bottom: none;
+    }
+
+    .challenge-icon {
+      width: 36px;
+      height: 36px;
+      background: rgba(220, 38, 38, 0.1);
+      border: 1px solid rgba(220, 38, 38, 0.3);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .challenge-text h4 {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .challenge-text p {
+      font-size: 14px;
+      color: rgba(226, 232, 240, 0.6);
+      margin: 0;
+    }
+
+    .problem-img {
+      background: linear-gradient(135deg, rgba(77, 159, 255, 0.1) 0%, rgba(13, 82, 181, 0.1) 100%);
+      padding: 60px;
+      border-radius: 16px;
+      text-align: center;
+      color: rgba(226, 232, 240, 0.5);
+      font-size: 80px;
+    }
+
+    /* Solution Section */
+    .solution {
+      background: linear-gradient(180deg, rgba(5, 39, 96, 0.2) 0%, rgba(15, 23, 42, 0.5) 100%);
+    }
+
+    .solution-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      align-items: center;
+    }
+
+    .solution-list {
+      list-style: none;
+    }
+
+    .solution-item {
+      padding: 24px;
+      background: rgba(77, 159, 255, 0.08);
+      border: 1px solid rgba(77, 159, 255, 0.2);
+      border-radius: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .solution-icon {
+      width: 36px;
+      height: 36px;
+      background: rgba(77, 159, 255, 0.2);
+      border: 1px solid rgba(77, 159, 255, 0.4);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .solution-item h4 {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .solution-item p {
+      font-size: 14px;
+      color: rgba(226, 232, 240, 0.7);
+      margin: 0;
+    }
+
+    /* Differentiator */
+    .differentiator {
+      background: #0f172a;
+    }
+
+    .diff-container {
+      background: linear-gradient(135deg, rgba(77, 159, 255, 0.12) 0%, rgba(13, 82, 181, 0.08) 100%);
+      border: 1px solid rgba(77, 159, 255, 0.3);
+      border-radius: 16px;
+      padding: 60px 40px;
+      text-align: center;
+    }
+
+    .diff-label {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #4d9fff;
+      margin-bottom: 24px;
+    }
+
+    .diff-title {
+      font-size: 42px;
+      font-weight: 900;
+      margin-bottom: 32px;
+      line-height: 1.2;
+    }
+
+    .diff-features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 40px;
+      margin-top: 40px;
+    }
+
+    .diff-feature {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .diff-feature-icon {
+      font-size: 40px;
+    }
+
+    .diff-feature h4 {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .diff-feature p {
+      font-size: 14px;
+      color: rgba(226, 232, 240, 0.7);
+    }
+
+    /* Comparison */
+    .comparison {
+      background: linear-gradient(180deg, rgba(5, 39, 96, 0.2) 0%, rgba(15, 23, 42, 0.5) 100%);
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-top: 40px;
+    }
+
+    .comparison-card {
+      border-radius: 12px;
+      padding: 40px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .comparison-card.bad {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .comparison-card.good {
+      background: rgba(77, 159, 255, 0.12);
+      border-color: rgba(77, 159, 255, 0.3);
+    }
+
+    .comparison-label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .comparison-card.bad .comparison-label {
+      color: rgba(226, 232, 240, 0.4);
+    }
+
+    .comparison-card.good .comparison-label {
+      color: #4d9fff;
+    }
+
+    .comparison-title {
+      font-size: 28px;
+      font-weight: 800;
+      margin-bottom: 24px;
+    }
+
+    .comparison-points {
+      list-style: none;
+      margin-top: 24px;
+    }
+
+    .comparison-point {
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      font-size: 15px;
+    }
+
+    .comparison-point:last-child {
+      border-bottom: none;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      background: linear-gradient(135deg, #041e42 0%, #0a3b8c 100%);
+      text-align: center;
+      padding: 100px 40px;
+    }
+
+    .cta-badge {
+      display: inline-block;
+      background: #4d9fff;
+      color: #041e42;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 8px 20px;
+      border-radius: 100px;
+      margin-bottom: 24px;
+    }
+
+    .cta-title {
+      font-size: 48px;
+      font-weight: 900;
+      margin-bottom: 24px;
+    }
+
+    .cta-text {
+      font-size: 18px;
+      color: rgba(226, 232, 240, 0.8);
+      max-width: 600px;
+      margin: 0 auto 40px;
+    }
+
+    /* Footer */
+    footer {
+      background: #000a0f;
+      padding: 40px;
+      text-align: center;
+      color: rgba(226, 232, 240, 0.5);
+      font-size: 14px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+      }
+
+      .hero h1 {
+        font-size: 36px;
+      }
+
+      .problem-grid, .solution-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .diff-features {
+        grid-template-columns: 1fr;
+      }
+
+      .section-title {
+        font-size: 32px;
+      }
+
+      .cta-title {
+        font-size: 36px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <nav class="navbar">
+      <div class="logo">Agente Aduanas</div>
+      <ul class="nav-links">
+        <li><a href="#problema">Problema</a></li>
+        <li><a href="#solucion">Solución</a></li>
+        <li><a href="#diferenciador">Diferenciador</a></li>
+      </ul>
+      <a href="#cta" class="cta-btn">Probar Gratis</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-content">
+      <h1>ChatGPT no sabe cómo opera <span>tu empresa.</span></h1>
+      <p>Agente Aduanas sí. Consulta normativa oficial + tus propios documentos con IA especializada en comercio exterior.</p>
+      <div class="hero-cta">
+        <a href="#cta" class="btn-primary">Probar 3 días Gratis</a>
+        <a href="#diferenciador" class="btn-secondary">Cómo funciona</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Problema -->
+  <section class="problem" id="problema">
+    <h2 class="section-title">El desafío de hoy en <span>comercio exterior</span></h2>
+    <div class="problem-grid">
+      <div class="problem-content">
+        <h3>La normativa cambia constantemente.</h3>
+        <p>Y tu equipo no puede estar persiguiendo cada cambio en Aduana Chile, SII, BCN y Diario Oficial.</p>
+
+        <ul class="challenge-list">
+          <li class="challenge-item">
+            <div class="challenge-icon">📋</div>
+            <div class="challenge-text">
+              <h4>Busca manual constante</h4>
+              <p>Horas perdidas en portales de gobierno</p>
+            </div>
+          </li>
+          <li class="challenge-item">
+            <div class="challenge-icon">📁</div>
+            <div class="challenge-text">
+              <h4>Conocimiento disperso</h4>
+              <p>Procedimientos internos guardados en PDFs que nadie encuentra</p>
+            </div>
+          </li>
+          <li class="challenge-item">
+            <div class="challenge-icon">⚠️</div>
+            <div class="challenge-text">
+              <h4>Riesgo de incumplimiento</h4>
+              <p>Información desactualizada = multas y retrasos</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <div class="problem-img">🔍</div>
+    </div>
+  </section>
+
+  <!-- Solución -->
+  <section class="solution" id="solucion">
+    <h2 class="section-title">La solución: <span>normativa siempre al día</span></h2>
+    <div class="solution-grid">
+      <ul class="solution-list">
+        <li class="solution-item">
+          <div class="solution-icon">✓</div>
+          <div>
+            <h4>Consulta en tiempo real</h4>
+            <p>Aduana Chile, SII, BCN, Diario Oficial integrados</p>
+          </div>
+        </li>
+        <li class="solution-item">
+          <div class="solution-icon">✓</div>
+          <div>
+            <h4>Sin búsquedas manuales</h4>
+            <p>El agente sabe dónde buscar y qué te aplica</p>
+          </div>
+        </li>
+        <li class="solution-item">
+          <div class="solution-icon">✓</div>
+          <div>
+            <h4>Información actualizada</h4>
+            <p>No más riesgo de normativa desactualizada</p>
+          </div>
+        </li>
+      </ul>
+      <div class="problem-img">✅</div>
+    </div>
+  </section>
+
+  <!-- Diferenciador -->
+  <section class="differentiator" id="diferenciador">
+    <div class="diff-container">
+      <div class="diff-label">El diferenciador clave</div>
+      <h2 class="diff-title">Además, <span>aprende los documentos de tu empresa.</span></h2>
+      <p>No solo accede a normativa oficial. Sube tus archivos internos y el agente los consulta junto con la ley.</p>
+
+      <div class="diff-features">
+        <div class="diff-feature">
+          <div class="diff-feature-icon">⬆️</div>
+          <h4>Sube una sola vez</h4>
+          <p>Procedimientos, contratos, manuales internos</p>
+        </div>
+        <div class="diff-feature">
+          <div class="diff-feature-icon">💬</div>
+          <h4>Consulta en lenguaje natural</h4>
+          <p>"¿Cómo importo esto?" no "busca regex en PDF"</p>
+        </div>
+        <div class="diff-feature">
+          <div class="diff-feature-icon">⚡</div>
+          <h4>Respuesta instantánea</h4>
+          <p>Con contexto de tu operación real</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparación -->
+  <section class="comparison">
+    <h2 class="section-title">Comparativa: <span>Chatbot genérico vs Agente Aduanas</span></h2>
+    <div class="comparison-grid">
+      <div class="comparison-card bad">
+        <div class="comparison-label">Chatbot genérico</div>
+        <h3 class="comparison-title">Respuestas genéricas</h3>
+        <ul class="comparison-points">
+          <li class="comparison-point">Solo conoce la ley</li>
+          <li class="comparison-point">No conoce tu operación</li>
+          <li class="comparison-point">Respuestas genéricas para todos</li>
+          <li class="comparison-point">Información desactualizada</li>
+          <li class="comparison-point">No integra tus documentos</li>
+        </ul>
+      </div>
+      <div class="comparison-card good">
+        <div class="comparison-label">Agente Aduanas</div>
+        <h3 class="comparison-title">Respuestas tuyas</h3>
+        <ul class="comparison-points">
+          <li class="comparison-point">Ley + contexto de tu empresa</li>
+          <li class="comparison-point">Especializado en aduanas chilenas</li>
+          <li class="comparison-point">Respuestas personalizadas</li>
+          <li class="comparison-point">Siempre actualizado</li>
+          <li class="comparison-point">Integra tus documentos internos</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section" id="cta">
+    <div class="cta-badge">Demo disponible</div>
+    <h2 class="cta-title">¿Operas en <span>comercio exterior?</span></h2>
+    <p class="cta-text">Pruébalo 3 días gratis. Sin tarjeta de crédito. Sin compromiso. Acceso inmediato.</p>
+    <a href="https://aduanas.toxirodigital.cloud" class="btn-primary" style="font-size: 16px; padding: 16px 48px;">Comenzar Demo Gratuita</a>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <p>&copy; 2026 Toxiro Digital. Agente especializado en normativa aduanera chilena.</p>
+  </footer>
+
+</body>
+</html>

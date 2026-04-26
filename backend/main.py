@@ -551,6 +551,15 @@ if FRONTEND_DIR.exists():
     app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
 
+@app.get("/landing")
+async def serve_landing():
+    """Sirve la landing page de marketing."""
+    landing_path = FRONTEND_DIR / "landing.html"
+    if not landing_path.exists():
+        return JSONResponse(status_code=404, content={"detail": "Landing page no encontrada"})
+    return FileResponse(str(landing_path))
+
+
 @app.get("/admin")
 async def serve_admin():
     """Sirve el panel de administración."""
