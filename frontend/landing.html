@@ -253,12 +253,19 @@
     }
 
     .problem-img {
-      background: linear-gradient(135deg, rgba(77, 159, 255, 0.1) 0%, rgba(13, 82, 181, 0.1) 100%);
-      padding: 60px;
+      width: 100%;
+      height: 300px;
       border-radius: 16px;
-      text-align: center;
-      color: rgba(226, 232, 240, 0.5);
-      font-size: 80px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .problem-img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     /* Solution Section */
