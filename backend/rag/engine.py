@@ -67,9 +67,9 @@ Cuando se te proporciona contexto de documentos, esos documentos son REALES y AC
 ## Instrucciones de respuesta:
 
 1. **SIEMPRE responde en español**, usando terminología técnica aduanera chilena correcta.
-2. **Cuando se te proporciona contexto de documentos indexados:** basa tu respuesta exclusivamente en esos documentos. Cita las fuentes con precisión (nombre, número de circular/resolución, artículo, fecha).
-3. **Cuando NO hay contexto de documentos:** usa tu conocimiento para entregar una respuesta CONCRETA y ÚTIL. PROHIBIDO responder solo con una negativa o disculpa. Si preguntan por cambios "de la semana pasada" o "recientes": da los cambios normativos más relevantes que conozcas de tu entrenamiento, especifica el período que cubres, y orienta al usuario a verificar en https://www.aduana.cl y https://www.diariooficial.interior.gob.cl.
-4. **NUNCA respondas con "no tengo acceso" sin antes dar información sustantiva**. Siempre entrega el máximo de conocimiento disponible antes de cualquier advertencia de limitación.
+2. **Cuando se te proporciona contexto de documentos indexados:** basa tu respuesta en esos documentos. Cita las fuentes con precisión (nombre, número de circular/resolución, artículo, fecha).
+3. **Cuando no hay documentos en el contexto:** responde con toda tu expertise en normativa aduanera chilena. JAMÁS menciones fechas de corte, limitaciones de entrenamiento, ni expliques cómo funciona la IA. Simplemente responde como el experto que eres.
+4. **PROHIBIDO ABSOLUTO:** mencionar "corte de entrenamiento", "fecha de corte", "conocimiento hasta X año", "no tengo acceso en tiempo real", o cualquier variante. Esas frases destruyen la confianza del usuario. Si no tienes un documento específico, orienta al usuario a las fuentes oficiales sin explicar por qué.
 5. Cuando menciones un número de circular, resolución o decreto, indícalo explícitamente (ej. "Circular N°XX de Aduanas", "Resolución Exenta N°XX").
 6. Estructura tus respuestas de forma clara con párrafos o listas cuando sea apropiado.
 7. Si se trata de un procedimiento, describe los pasos en orden.
@@ -245,7 +245,7 @@ class RAGEngine:
         hint = type_hints.get(query_type, "")
 
         if context:
-            message = f"""Contexto de documentos indexados en la base de datos:
+            message = f"""Documentos oficiales disponibles en la base de datos:
 
 {context}
 
@@ -255,19 +255,19 @@ class RAGEngine:
 Consulta del usuario: {query}
 
 Instrucciones:
-- Si los documentos del contexto contienen información relevante para responder la consulta, úsalos como fuente principal y cítalos (nombre, número, fecha).
-- Si los documentos del contexto NO contienen información suficiente para responder la consulta, responde de todas formas usando tu conocimiento sobre normativa aduanera chilena. En ese caso, indica al inicio en una sola línea: "*(El documento no está en la base de datos. Esta respuesta se basa en conocimiento de entrenamiento.)*" y luego entrega la respuesta concreta y útil."""
+- Usa los documentos anteriores como fuente principal y cítalos con precisión (nombre, número, fecha).
+- Si los documentos no contienen información suficiente, complementa con tu expertise en normativa aduanera chilena, pero sin mencionar limitaciones técnicas del sistema."""
         else:
             message = f"""{hint}
 Consulta del usuario: {query}
 
-No se encontraron documentos sobre este tema en la base de datos indexada.
+No hay documentos específicos sobre este tema en la base de datos en este momento.
 
-Responde usando tu conocimiento sobre normativa aduanera chilena. Sé CONCRETO y ÚTIL. Reglas estrictas:
-
-1. Escribe al inicio en una sola línea: "*(Esta respuesta se basa en conocimiento de entrenamiento. Verifica en fuentes oficiales para información de los últimos días.)*"
-2. Si la consulta pregunta por cambios "de la semana pasada", "recientes" o "últimos días": NO digas que no puedes responder. En cambio, entrega los cambios normativos más importantes y recientes que conozcas de tu entrenamiento, indicando el período aproximado que cubres, y termina con los enlaces oficiales donde verificar: https://www.aduana.cl (Circulares y Resoluciones) y https://www.diariooficial.interior.gob.cl
-3. Nunca respondas solo con una negativa o disculpa. Siempre entrega el máximo de información útil disponible."""
+Responde como experto en normativa aduanera chilena. Reglas:
+1. NUNCA menciones "corte de entrenamiento", "fecha de corte", "conocimiento hasta X año" ni nada similar.
+2. Da una respuesta concreta y útil basada en tu expertise.
+3. Si preguntan por cambios "de la semana pasada" o "recientes": entrega los cambios normativos más relevantes y recientes que conozcas, y al final indica: "Para verificar las publicaciones más recientes, revisa directamente https://www.aduana.cl y https://www.diariooficial.interior.gob.cl"
+4. Nunca respondas solo con una negativa."""
 
         return message
 
