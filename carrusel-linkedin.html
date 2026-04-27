@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carrusel LinkedIn — Toxiro Digital</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      padding: 40px 20px;
+    }
+
+    .instructions {
+      background: #2d2d4e;
+      color: #ccc;
+      padding: 16px 24px;
+      border-radius: 12px;
+      font-size: 14px;
+      max-width: 1080px;
+      width: 100%;
+      line-height: 1.6;
+    }
+    .instructions strong { color: #fff; }
+    .instructions a { color: #5b9bd5; }
+
+    .slide {
+      width: 1080px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 80px;
+      page-break-after: always;
+    }
+
+    /* Fondo base azul oscuro */
+    .slide-bg-dark {
+      background: linear-gradient(145deg, #041e42 0%, #0a3b8c 60%, #0d52b5 100%);
+    }
+
+    /* Fondo azul medio */
+    .slide-bg-mid {
+      background: linear-gradient(145deg, #052760 0%, #0d4aa0 100%);
+    }
+
+    /* Fondo casi negro con acento */
+    .slide-bg-deep {
+      background: linear-gradient(160deg, #020e22 0%, #041e42 100%);
+    }
+
+    /* Onda decorativa */
+    .wave {
+      position: absolute;
+      bottom: -60px;
+      right: -80px;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.06);
+      pointer-events: none;
+    }
+    .wave2 {
+      position: absolute;
+      bottom: -120px;
+      right: -140px;
+      width: 680px;
+      height: 680px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.04);
+      pointer-events: none;
+    }
+    .wave3 {
+      position: absolute;
+      top: -100px;
+      left: -100px;
+      width: 400px;
+      height: 400px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.04);
+      pointer-events: none;
+    }
+
+    /* Número de slide */
+    .slide-number {
+      position: absolute;
+      top: 48px;
+      right: 60px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 2px;
+    }
+
+    /* Logo */
+    .logo {
+      position: absolute;
+      bottom: 48px;
+      right: 60px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo img {
+      height: 36px;
+      filter: brightness(0) invert(1);
+      opacity: 0.7;
+    }
+    .logo-text {
+      font-size: 16px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 1px;
+    }
+
+    /* Línea acento */
+    .accent-line {
+      width: 64px;
+      height: 5px;
+      background: #4d9fff;
+      border-radius: 3px;
+      margin-bottom: 36px;
+    }
+
+    /* Etiqueta pequeña */
+    .label {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #4d9fff;
+      margin-bottom: 20px;
+    }
+
+    /* Títulos */
+    .title-xl {
+      font-size: 64px;
+      font-weight: 900;
+      color: #ffffff;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      max-width: 880px;
+      word-break: break-word;
+    }
+    .title-xl span { color: #4d9fff; }
+
+    .title-lg {
+      font-size: 52px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      max-width: 840px;
+      word-break: break-word;
+    }
+    .title-lg span { color: #4d9fff; }
+
+    .title-md {
+      font-size: 42px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.15;
+      margin-bottom: 20px;
+      max-width: 840px;
+      word-break: break-word;
+    }
+    .title-md span { color: #4d9fff; }
+
+    /* Subtítulo / cuerpo */
+    .body-text {
+      font-size: 24px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.75);
+      line-height: 1.6;
+      max-width: 800px;
+    }
+    .body-text strong { color: #fff; font-weight: 700; }
+
+    /* Lista con íconos */
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-top: 12px;
+    }
+    .list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .list-icon {
+      width: 36px;
+      height: 36px;
+      background: rgba(77,159,255,0.2);
+      border: 1px solid rgba(77,159,255,0.4);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+      font-size: 16px;
+    }
+    .list-text {
+      font-size: 23px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.8);
+      line-height: 1.4;
+    }
+    .list-text strong { color: #fff; }
+
+    /* Card highlight */
+    .highlight-card {
+      background: rgba(77,159,255,0.12);
+      border: 1px solid rgba(77,159,255,0.3);
+      border-radius: 16px;
+      padding: 32px 40px;
+      margin-top: 28px;
+      max-width: 860px;
+    }
+    .highlight-card p {
+      font-size: 28px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.5;
+    }
+    .highlight-card span { color: #4d9fff; }
+
+    /* Vs comparison */
+    .vs-container {
+      display: flex;
+      gap: 24px;
+      margin-top: 12px;
+      width: 100%;
+      max-width: 920px;
+    }
+    .vs-card {
+      flex: 1;
+      padding: 32px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .vs-bad {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .vs-good {
+      background: rgba(77,159,255,0.12);
+      border: 1px solid rgba(77,159,255,0.35);
+    }
+    .vs-label {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .vs-bad .vs-label { color: rgba(255,255,255,0.3); }
+    .vs-good .vs-label { color: #4d9fff; }
+    .vs-title {
+      font-size: 30px;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.2;
+    }
+    .vs-body {
+      font-size: 20px;
+      color: rgba(255,255,255,0.6);
+      line-height: 1.5;
+    }
+    .vs-good .vs-body { color: rgba(255,255,255,0.8); }
+
+    /* CTA slide */
+    .cta-badge {
+      display: inline-block;
+      background: #4d9fff;
+      color: #041e42;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 10px 24px;
+      border-radius: 100px;
+      margin-bottom: 32px;
+    }
+    .cta-title {
+      font-size: 56px;
+      font-weight: 900;
+      color: #fff;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      max-width: 840px;
+      word-break: break-word;
+    }
+    .cta-sub {
+      font-size: 26px;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.5;
+      margin-bottom: 40px;
+      max-width: 760px;
+    }
+    .cta-arrow {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 24px;
+      font-weight: 700;
+      color: #4d9fff;
+    }
+
+    /* Separador diagonal decorativo */
+    .diagonal {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 320px;
+      height: 1080px;
+      background: rgba(255,255,255,0.02);
+      clip-path: polygon(40% 0%, 100% 0%, 100% 100%, 0% 100%);
+    }
+
+    @media print {
+      @page { size: 1080px 1080px; margin: 0; }
+      html, body { width: 1080px; }
+      body { background: transparent; padding: 0; gap: 0; }
+      .instructions { display: none; }
+      .slide {
+        page-break-after: always;
+        break-after: page;
+        width: 1080px !important;
+        height: 1080px !important;
+        overflow: hidden !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="instructions">
+    <strong>Cómo exportar a PDF para LinkedIn:</strong><br>
+    1. Abre este archivo en Chrome o Edge &nbsp;|&nbsp;
+    2. Presiona <strong>Ctrl + P</strong> &nbsp;|&nbsp;
+    3. Destino: <strong>Guardar como PDF</strong> &nbsp;|&nbsp;
+    4. Márgenes: <strong>Ninguno</strong> &nbsp;|&nbsp;
+    5. Escala: <strong>100%</strong> &nbsp;|&nbsp;
+    6. Activa <strong>"Gráficos de fondo"</strong> &nbsp;|&nbsp;
+    7. Guarda y sube el PDF a LinkedIn como documento nativo.
+  </div>
+
+  <!-- SLIDE 1 — Hook -->
+  <div class="slide slide-bg-dark">
+    <div class="wave"></div><div class="wave2"></div><div class="wave3"></div>
+    <div class="diagonal"></div>
+    <div class="slide-number">01 / 08</div>
+    <div class="label">Toxiro Digital</div>
+    <div class="accent-line"></div>
+    <div class="title-xl">ChatGPT no sabe<br>cómo opera<br><span>tu empresa.</span></div>
+    <div class="body-text">Agente Aduanas, sí.</div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 2 — El problema genérico -->
+  <div class="slide slide-bg-deep">
+    <div class="wave"></div><div class="wave2"></div>
+    <div class="diagonal"></div>
+    <div class="slide-number">02 / 08</div>
+    <div class="label">El problema</div>
+    <div class="accent-line"></div>
+    <div class="title-lg">Los chatbots genéricos<br>te dan <span>la ley.</span></div>
+    <div class="body-text">Pero la ley sin contexto<br>no resuelve nada.</div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 3 — Normativa cambia -->
+  <div class="slide slide-bg-mid">
+    <div class="wave"></div><div class="wave2"></div>
+    <div class="slide-number">03 / 08</div>
+    <div class="label">Desafío 1</div>
+    <div class="accent-line"></div>
+    <div class="title-md">La normativa aduanera<br>chilena <span>cambia constantemente.</span></div>
+    <div class="list">
+      <div class="list-item">
+        <div class="list-icon">📋</div>
+        <div class="list-text">Aduana Chile</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">🏛️</div>
+        <div class="list-text">SII &amp; BCN</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">📰</div>
+        <div class="list-text">Diario Oficial</div>
+      </div>
+    </div>
+    <div class="highlight-card">
+      <p>¿Quién la sigue en <span>tu empresa</span>?</p>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 4 — Conocimiento interno -->
+  <div class="slide slide-bg-dark">
+    <div class="wave"></div><div class="wave2"></div><div class="wave3"></div>
+    <div class="diagonal"></div>
+    <div class="slide-number">04 / 08</div>
+    <div class="label">Desafío 2</div>
+    <div class="accent-line"></div>
+    <div class="title-md">Tu empresa tiene <span>años de conocimiento</span><br>acumulado.</div>
+    <div class="list" style="margin-top: 20px;">
+      <div class="list-item">
+        <div class="list-icon">📁</div>
+        <div class="list-text">Procedimientos internos</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">📄</div>
+        <div class="list-text">Contratos con proveedores</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">🚢</div>
+        <div class="list-text">Historial de despachos</div>
+      </div>
+    </div>
+    <div class="highlight-card">
+      <p>Todo guardado en PDFs que <span>nadie encuentra.</span></p>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 5 — Solución pilar 1 -->
+  <div class="slide slide-bg-mid">
+    <div class="wave"></div><div class="wave2"></div>
+    <div class="slide-number">05 / 08</div>
+    <div class="label">Solución</div>
+    <div class="accent-line"></div>
+    <div class="title-md">Normativa oficial<br><span>siempre actualizada.</span></div>
+    <div class="body-text" style="margin-bottom: 32px;">Agente Aduanas consulta en tiempo real:</div>
+    <div class="vs-container" style="flex-direction: column; gap: 16px;">
+      <div class="list-item">
+        <div class="list-icon">✓</div>
+        <div class="list-text">Aduana Chile, SII, BCN, Diario Oficial</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">✓</div>
+        <div class="list-text">Sin búsquedas manuales</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">✓</div>
+        <div class="list-text">Sin riesgo de información desactualizada</div>
+      </div>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 6 — El diferenciador clave -->
+  <div class="slide slide-bg-dark">
+    <div class="wave"></div><div class="wave2"></div><div class="wave3"></div>
+    <div class="diagonal"></div>
+    <div class="slide-number">06 / 08</div>
+    <div class="label">El diferenciador</div>
+    <div class="accent-line"></div>
+    <div class="title-md">Además, <span>aprende los documentos<br>de tu empresa.</span></div>
+    <div class="list" style="margin-top: 16px;">
+      <div class="list-item">
+        <div class="list-icon">⬆️</div>
+        <div class="list-text"><strong>Sube tus archivos</strong> una sola vez</div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">💬</div>
+        <div class="list-text"><strong>Consúltalos en lenguaje natural</strong></div>
+      </div>
+      <div class="list-item">
+        <div class="list-icon">⚡</div>
+        <div class="list-text">Respuesta instantánea, siempre</div>
+      </div>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 7 — El resultado -->
+  <div class="slide slide-bg-mid">
+    <div class="wave"></div><div class="wave2"></div>
+    <div class="slide-number">07 / 08</div>
+    <div class="label">El resultado</div>
+    <div class="accent-line"></div>
+    <div class="vs-container">
+      <div class="vs-card vs-bad">
+        <div class="vs-label">Chatbot genérico</div>
+        <div class="vs-title">Respuestas<br>genéricas</div>
+        <div class="vs-body">Solo conoce la ley.<br>No conoce tu operación.</div>
+      </div>
+      <div class="vs-card vs-good">
+        <div class="vs-label">Agente Aduanas</div>
+        <div class="vs-title">Respuestas<br>tuyas</div>
+        <div class="vs-body">Ley + contexto real<br>de tu empresa.</div>
+      </div>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+  <!-- SLIDE 8 — CTA -->
+  <div class="slide slide-bg-dark">
+    <div class="wave"></div><div class="wave2"></div><div class="wave3"></div>
+    <div class="diagonal"></div>
+    <div class="slide-number">08 / 08</div>
+    <div class="cta-badge">Demo disponible</div>
+    <div class="cta-title">¿Operas en comercio<br>exterior en Chile?</div>
+    <div class="cta-sub">Quiero mostrarte cómo funciona.<br>Sin costo. Sin compromiso.</div>
+    <div class="cta-arrow">
+      <span>👉</span>
+      <span>Link en comentarios</span>
+    </div>
+    <div class="logo"><span class="logo-text">TOXIRO Digital</span></div>
+  </div>
+
+</body>
+</html>

@@ -123,11 +123,13 @@ async def _run_all_scrapers() -> dict[str, Any]:
         vector_store.initialize()
 
         # Lista de scrapers a ejecutar
+        # Nota: SII.cl y Diario Oficial están deshabilitados temporalmente debido a cambios
+        # en la estructura de sus sitios web. Solo los scrapers funcionales están activos.
         scrapers = [
             ("Aduana.cl", AduanaScraper()),
             ("BCN.cl", BCNScraper()),
-            ("SII.cl", SIIScraper()),
-            ("Diario Oficial", DiarioOficialScraper()),
+            # ("SII.cl", SIIScraper()),  # Deshabilitado: URLs retornan 404
+            # ("Diario Oficial", DiarioOficialScraper()),  # Deshabilitado: búsqueda no funcional
         ]
 
         for scraper_name, scraper in scrapers:
