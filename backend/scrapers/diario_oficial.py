@@ -1,77 +1,65 @@
 """
 Scraper para el Diario Oficial de la República de Chile.
-URL base: https://www.diariooficial.interior.gob.cl
-Extrae: resoluciones aduaneras, decretos relacionados con importaciones/exportaciones.
+URL base: https://www.diariooficial.interior.gob.cl/edicionelectronica/
+Extrae: resoluciones y decretos de aduanas, SII y Hacienda publicados en los últimos días.
 """
+import io
 import logging
+import tempfile
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse, urlencode
+from urllib.parse import urljoin
 
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.diariooficial.interior.gob.cl"
+EDITION_URL = f"{BASE_URL}/edicionelectronica/index.php"
 
-# Términos de búsqueda para filtrar publicaciones aduaneras
-SEARCH_TERMS = [
-    "aduana",
-    "aduanas",
-    "arancel",
-    "importación",
-    "exportación",
-    "zona franca",
-    "derechos aduaneros",
+KEYWORDS_RELEVANTES = [
+    "aduana", "aduanas", "arancel",
+    "importación", "importacion", "exportación", "exportacion",
+    "zona franca", "derechos de aduana", "compendio de normas aduaneras",
 ]
 
-# Secciones del Diario Oficial donde aparecen normas aduaneras
-SECTIONS = [
-    {
-        "url": f"{BASE_URL}/edicion/index.php",
-        "label": "Edición actual",
-    },
-    {
-        "url": f"{BASE_URL}/cvs/pages/pub/hacienda/",
-        "label": "Publicaciones Hacienda",
-    },
+INSTITUCIONES_RELEVANTES = [
+    "aduanas", "hacienda", "sii", "impuestos internos",
+    "servicio nacional de aduanas", "banco central",
 ]
+
+DIAS_A_REVISAR = 14
 
 
 class DiarioOficialScraper(BaseScraper):
     """
-    Scraper para el Diario Oficial de Chile.
-    Busca y extrae resoluciones y decretos de carácter aduanero.
+    Scraper para el Diario Oficial de Chile (edición electrónica).
+    Navega por edición diaria y descarga PDFs de documentos de aduanas.
     """
 
     SOURCE_NAME = "Diario Oficial de la República de Chile"
 
     async def scrape(self) -> list[dict[str, Any]]:
-        """Ejecuta el scraping del Diario Oficial."""
+        """Revisa las últimas 2 semanas de ediciones del Diario Oficial."""
         documents = []
 
         async with self as scraper:
-            # Buscar en los últimos 30 días
-            docs_recent = await scraper._scrape_recent_editions()
-            documents.extend(docs_recent)
+            for dias_atras in range(DIAS_A_REVISAR):
+                fecha = date.today() - timedelta(days=dias_atras)
 
-            # Búsqueda por términos
-            for term in SEARCH_TERMS[:3]:  # limitar para no sobrecargar
+                # El Diario Oficial no publica los domingos
+                if fecha.weekday() == 6:
+                    continue
+
                 try:
-                    search_docs = await scraper._search_term(term)
-                    documents.extend(search_docs)
+                    docs_del_dia = await scraper._scrape_edition(fecha)
+                    documents.extend(docs_del_dia)
                 except Exception as e:
-                    logger.error(f"Error buscando '{term}' en Diario Oficial: {e}")
-
-            # Intentar página de búsqueda avanzada
-            try:
-                adv_docs = await scraper._scrape_advanced_search()
-                documents.extend(adv_docs)
-            except Exception as e:
-                logger.error(f"Error en búsqueda avanzada Diario Oficial: {e}")
+                    logger.error(f"Error scrapeando edición {fecha}: {e}")
 
         # Deduplicar por URL
-        seen_urls = set()
+        seen_urls: set[str] = set()
         unique_docs = []
         for doc in documents:
             if doc["url"] not in seen_urls:
@@ -81,206 +69,125 @@ class DiarioOficialScraper(BaseScraper):
         logger.info(f"Total documentos únicos del Diario Oficial: {len(unique_docs)}")
         return unique_docs
 
-    async def _scrape_recent_editions(self) -> list[dict[str, Any]]:
-        """Obtiene publicaciones recientes del Diario Oficial con contenido aduanero."""
-        documents = []
-
-        # Intentar página principal
-        html = await self.fetch(BASE_URL)
-        if not html:
-            # Intentar URL alternativa
-            html = await self.fetch(f"{BASE_URL}/edicion/index.php")
-
-        if not html:
-            logger.warning("No se pudo acceder al Diario Oficial")
-            return documents
-
-        soup = self.parse_html(html, BASE_URL)
-
-        # Buscar fechas de ediciones recientes
-        edition_links = soup.find_all("a", href=True)
-
-        for link in edition_links[:50]:
-            href = link.get("href", "")
-            title = self.clean_text(link.get_text())
-
-            if not title:
-                continue
-
-            # Verificar si contiene palabras clave de aduanas
-            title_lower = title.lower()
-            if not any(term in title_lower for term in SEARCH_TERMS):
-                continue
-
-            full_url = urljoin(BASE_URL, href)
-            parsed = urlparse(full_url)
-            if "diariooficial" not in parsed.netloc and "interior.gob.cl" not in parsed.netloc:
-                continue
-
-            date_val = self.extract_date_from_text(title)
-
-            content = await self._fetch_publication_content(full_url, title)
-
-            documents.append({
-                "title": title[:300],
-                "url": full_url,
-                "date": date_val,
-                "content": content,
-                "content_type": self._detect_doc_type(title_lower),
-                "source": self.SOURCE_NAME,
-            })
-
-        return documents[:20]
-
-    async def _search_term(self, term: str) -> list[dict[str, Any]]:
-        """Busca un término específico en el Diario Oficial."""
-        documents = []
-
-        # URL de búsqueda del Diario Oficial
-        search_url = f"{BASE_URL}/cvs/pages/pub/index.php?busqueda={term.replace(' ', '+')}"
-        search_url_alt = f"{BASE_URL}/busqueda/?q={term.replace(' ', '+')}"
-
-        for url in [search_url, search_url_alt]:
-            html = await self.fetch(url)
-            if not html:
-                continue
-
-            soup = self.parse_html(html, url)
-
-            # Buscar resultados en la página
-            result_items = (
-                soup.find_all("li", class_=lambda c: c and "result" in c.lower() if c else False)
-                or soup.find_all("div", class_=lambda c: c and "result" in c.lower() if c else False)
-                or soup.find_all("tr")
-            )
-
-            for item in result_items[:10]:
-                link_tag = item.find("a", href=True) if hasattr(item, "find") else None
-                if not link_tag:
-                    continue
-
-                href = link_tag.get("href", "")
-                title = self.clean_text(link_tag.get_text())
-
-                if not title or len(title) < 5:
-                    # Usar texto del item
-                    title = self.clean_text(item.get_text())[:200]
-
-                if not title:
-                    continue
-
-                full_url = urljoin(url, href)
-                date_val = self.extract_date_from_text(item.get_text())
-                content = await self._fetch_publication_content(full_url, title)
-
-                documents.append({
-                    "title": title[:300],
-                    "url": full_url,
-                    "date": date_val,
-                    "content": content,
-                    "content_type": self._detect_doc_type(title.lower()),
-                    "source": self.SOURCE_NAME,
-                })
-
-            if documents:
-                break
-
-        return documents
-
-    async def _scrape_advanced_search(self) -> list[dict[str, Any]]:
-        """Intenta usar la búsqueda avanzada del Diario Oficial."""
-        documents = []
-
-        # URL de búsqueda avanzada con filtro por institución (Hacienda/Aduanas)
-        search_urls = [
-            f"{BASE_URL}/cvs/pages/pub/index.php?inst=Aduanas",
-            f"{BASE_URL}/cvs/pages/pub/hacienda/",
-            f"{BASE_URL}/edicion/",
-        ]
-
-        for url in search_urls:
-            html = await self.fetch(url)
-            if not html:
-                continue
-
-            soup = self.parse_html(html, url)
-            links = soup.find_all("a", href=True)
-
-            for link in links[:30]:
-                href = link.get("href", "")
-                title = self.clean_text(link.get_text())
-
-                if not title or len(title) < 10:
-                    continue
-
-                title_lower = title.lower()
-                if not any(term in title_lower for term in SEARCH_TERMS):
-                    # También aceptar resoluciones y decretos sin especificar
-                    if not any(t in title_lower for t in ["resolución", "resolucion", "decreto", "circular"]):
-                        continue
-
-                full_url = urljoin(url, href)
-                parsed = urlparse(full_url)
-                if "diariooficial" not in parsed.netloc and "interior.gob.cl" not in parsed.netloc:
-                    continue
-
-                date_val = self.extract_date_from_text(title)
-
-                documents.append({
-                    "title": title[:300],
-                    "url": full_url,
-                    "date": date_val,
-                    "content": f"Publicación del Diario Oficial: {title}",
-                    "content_type": self._detect_doc_type(title_lower),
-                    "source": self.SOURCE_NAME,
-                })
-
-            if documents:
-                break
-
-        return documents[:15]
-
-    async def _fetch_publication_content(self, url: str, fallback: str) -> str:
-        """Obtiene el contenido de una publicación del Diario Oficial."""
-        if url.lower().endswith(".pdf"):
-            return f"Publicación PDF del Diario Oficial: {fallback}"
+    async def _scrape_edition(self, fecha: date) -> list[dict[str, Any]]:
+        """Parsea la edición electrónica de una fecha específica."""
+        date_str = fecha.strftime("%d-%m-%Y")
+        url = f"{EDITION_URL}?date={date_str}"
 
         html = await self.fetch(url)
         if not html:
+            logger.debug(f"Sin edición disponible para {date_str}")
+            return []
+
+        soup = self.parse_html(html, BASE_URL)
+
+        # El sitio muestra este mensaje cuando no hay publicaciones
+        sin_pub = soup.find(string=lambda t: t and "no existen publicaciones" in t.lower() if t else False)
+        if sin_pub:
+            logger.debug(f"Sin publicaciones para {date_str}")
+            return []
+
+        documents = []
+
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            if not href.lower().endswith(".pdf"):
+                continue
+
+            full_url = urljoin(BASE_URL, href)
+            if "/publicaciones/" not in full_url:
+                continue
+
+            # Construir contexto de texto alrededor del enlace
+            title = self.clean_text(link.get_text()) or ""
+            parent_text = ""
+            for parent in [link.find_parent("p"), link.find_parent("li"),
+                           link.find_parent("tr"), link.find_parent("div")]:
+                if parent:
+                    parent_text = self.clean_text(parent.get_text())
+                    break
+
+            context = f"{title} {parent_text}".lower()
+
+            if not self._es_relevante(context):
+                continue
+
+            doc_type = self._detect_doc_type(context)
+            doc_title = title or parent_text[:200] or f"Publicación Diario Oficial {date_str}"
+
+            logger.info(f"Documento relevante: {doc_title[:80]}")
+
+            content = await self._extract_pdf_content(full_url, doc_title)
+            if not content or len(content.strip()) < 50:
+                content = parent_text or doc_title
+
+            documents.append({
+                "title": doc_title[:300],
+                "url": full_url,
+                "date": fecha.strftime("%Y-%m-%d"),
+                "content": content[:8000],
+                "content_type": doc_type,
+                "source": self.SOURCE_NAME,
+            })
+
+        return documents
+
+    async def _extract_pdf_content(self, url: str, fallback: str) -> str:
+        """Descarga un PDF y extrae su texto con pdfplumber."""
+        pdf_bytes = await self.fetch_bytes(url)
+        if not pdf_bytes:
             return fallback
 
-        soup = self.parse_html(html, url)
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            tag.decompose()
+        try:
+            import pdfplumber
 
-        # Buscar el cuerpo de la publicación
-        content_el = (
-            soup.find("div", id="contenido")
-            or soup.find("div", class_="publicacion")
-            or soup.find("div", class_="norma")
-            or soup.find("article")
-            or soup.find("main")
-            or soup.body
-        )
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(pdf_bytes)
+                tmp_path = Path(tmp.name)
 
-        if content_el:
-            text = self.clean_text(content_el.get_text(separator=" "))
-            return text[:6000]
+            try:
+                with pdfplumber.open(str(tmp_path)) as pdf:
+                    texts = []
+                    for page in pdf.pages[:10]:
+                        text = page.extract_text() or ""
+                        if text.strip():
+                            texts.append(text)
+                    return "\n\n".join(texts)
+            finally:
+                tmp_path.unlink(missing_ok=True)
 
-        return self.clean_text(soup.get_text(separator=" "))[:6000]
+        except ImportError:
+            logger.warning("pdfplumber no disponible, usando PyPDF2")
+            return self._extract_pdf_pypdf2(pdf_bytes, fallback)
+        except Exception as e:
+            logger.warning(f"Error extrayendo PDF {url}: {e}")
+            return fallback
 
-    def _detect_doc_type(self, title_lower: str) -> str:
-        """Detecta el tipo de documento publicado en el Diario Oficial."""
-        if "circular" in title_lower:
+    def _extract_pdf_pypdf2(self, pdf_bytes: bytes, fallback: str) -> str:
+        """Extracción de respaldo usando PyPDF2."""
+        try:
+            import PyPDF2
+            reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+            texts = [p.extract_text() or "" for p in reader.pages[:10]]
+            return "\n\n".join(t for t in texts if t.strip())
+        except Exception as e:
+            logger.warning(f"Error con PyPDF2: {e}")
+            return fallback
+
+    def _es_relevante(self, texto: str) -> bool:
+        """Verifica si el texto contiene palabras clave de aduanas."""
+        return any(kw in texto for kw in KEYWORDS_RELEVANTES + INSTITUCIONES_RELEVANTES)
+
+    def _detect_doc_type(self, texto: str) -> str:
+        """Detecta el tipo de documento."""
+        if "circular" in texto:
             return "circular"
-        if "resolución" in title_lower or "resolucion" in title_lower:
+        if "resolución" in texto or "resolucion" in texto:
             return "resolucion"
-        if "decreto" in title_lower:
+        if "decreto" in texto:
             return "decreto"
-        if "ley" in title_lower:
+        if "ley " in texto:
             return "ley"
-        if "arancel" in title_lower:
+        if "arancel" in texto:
             return "arancel"
-        if "instrucción" in title_lower or "instruccion" in title_lower:
-            return "instruccion"
         return "publicacion"

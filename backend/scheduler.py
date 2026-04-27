@@ -128,8 +128,8 @@ async def _run_all_scrapers() -> dict[str, Any]:
         scrapers = [
             ("Aduana.cl", AduanaScraper()),
             ("BCN.cl", BCNScraper()),
+            ("Diario Oficial", DiarioOficialScraper()),
             # ("SII.cl", SIIScraper()),  # Deshabilitado: URLs retornan 404
-            # ("Diario Oficial", DiarioOficialScraper()),  # Deshabilitado: búsqueda no funcional
         ]
 
         for scraper_name, scraper in scrapers:
