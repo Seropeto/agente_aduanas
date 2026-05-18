@@ -1437,6 +1437,20 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* Cursor parpadeante durante streaming */
+.stream-cursor {
+  display: inline-block;
+  animation: blink 0.8s step-end infinite;
+  color: var(--primary);
+  font-weight: bold;
+  margin-left: 1px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
 /* ================================================================
    INPUT DEL CHAT
    ================================================================ */
@@ -2367,3 +2381,33 @@ body {
   color: var(--text-muted);
 }
 .admin-empty svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
+
+/* ---- Botón exportar PDF (REQ-11) ---- */
+.pdf-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 1.5px solid var(--accent, #2563eb);
+  border-radius: 6px;
+  color: var(--accent, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pdf-export-btn:hover:not(:disabled) {
+  background: var(--accent, #2563eb);
+  color: #fff;
+}
+.pdf-export-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pdf-export-btn .pdf-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}

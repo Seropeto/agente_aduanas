@@ -13,7 +13,7 @@ from typing import Any, Literal, Optional
 import aiofiles
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,9 @@ from backend.auth.database import initialize_auth_db, admin_exists, create_user
 from backend.auth.utils import hash_password
 from backend.auth.router import router as auth_router, get_current_user
 from backend.billing.router import router as billing_router
+from backend.memory import initialize_memory_db, get_history, save_turn, delete_history
+from backend.pdf_export import generate_pdf
+from backend.normative_changelog import initialize_changelog_db, get_changelog_page
 
 # ------------------------------------------------------------------ #
 # Configuración de logging                                             #
@@ -91,6 +94,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error inicializando auth: {e}")
 
     try:
+        initialize_memory_db()
+        logger.info("Memoria conversacional inicializada")
+    except Exception as e:
+        logger.error(f"Error inicializando memoria: {e}")
+
+    try:
+        initialize_changelog_db()
+        logger.info("Changelog normativo inicializado")
+    except Exception as e:
+        logger.error(f"Error inicializando changelog: {e}")
+
+    try:
         start_scheduler()
         logger.info("Scheduler iniciado")
     except Exception as e:
@@ -140,6 +155,11 @@ class ChatRequest(BaseModel):
     filter: Literal["all", "normativa", "internos"] = Field(
         default="all",
         description="Filtro de colección: 'all', 'normativa' o 'internos'",
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="ID de sesión para agrupar la memoria conversacional",
     )
 
 
@@ -208,6 +228,7 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
             query=body.query,
             filter_collection=body.filter,
             user_id=current_user["id"],
+            session_id=body.session_id,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -239,6 +260,133 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
             status_code=500,
             detail="Error interno al procesar la consulta. Intente nuevamente.",
         )
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(
+    body: ChatRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Endpoint streaming (SSE) del agente RAG.
+    Emite eventos data: {type, ...} en tiempo real.
+    """
+    import time
+
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="La consulta no puede estar vacía")
+
+    if current_user.get("role") not in ("admin", "demo"):
+        from backend.billing.service import check_quota
+        quota = check_quota(current_user)
+        if not quota["allowed"]:
+            raise HTTPException(status_code=429, detail=quota["reason"])
+
+    client_ip = _get_client_ip(request)
+    t0 = time.monotonic()
+
+    async def event_generator():
+        query_type = "general"
+        chunks = 0
+        try:
+            async for event in rag_engine.query_stream(
+                query=body.query,
+                filter_collection=body.filter,
+                user_id=current_user["id"],
+                session_id=body.session_id,
+            ):
+                yield event
+                # Capturar metadatos del evento "done" para el log
+                import json as _json
+                try:
+                    payload = _json.loads(event.removeprefix("data: ").strip())
+                    if payload.get("type") == "done":
+                        query_type = payload.get("query_type", "general")
+                        chunks = payload.get("chunks", 0)
+                except Exception:
+                    pass
+        finally:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            try:
+                log_query(
+                    query=body.query,
+                    filter_collection=body.filter,
+                    query_type=query_type,
+                    chunks_retrieved=chunks,
+                    duration_ms=duration_ms,
+                    client_id="stream",
+                    ip=client_ip,
+                )
+            except Exception:
+                pass
+            if current_user.get("role") not in ("admin", "demo"):
+                from backend.billing.service import record_query
+                asyncio.create_task(record_query(current_user["id"]))
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ------------------------------------------------------------------ #
+# Rutas: Memoria conversacional                                        #
+# ------------------------------------------------------------------ #
+@app.delete("/api/memory")
+async def clear_memory(current_user: dict = Depends(get_current_user)):
+    """Elimina todo el historial conversacional del usuario autenticado."""
+    try:
+        delete_history(current_user["id"])
+        return {"message": "Historial eliminado correctamente"}
+    except Exception as e:
+        logger.error(f"Error eliminando historial: {e}")
+        raise HTTPException(status_code=500, detail="Error al eliminar el historial")
+
+
+# ------------------------------------------------------------------ #
+# Rutas: Exportación PDF (REQ-11)                                     #
+# ------------------------------------------------------------------ #
+class PDFExportRequest(BaseModel):
+    query:      str        = Field(..., min_length=1, max_length=2000)
+    answer:     str        = Field(..., min_length=1, max_length=20000)
+    sources:    list[dict] = Field(default_factory=list)
+    query_type: str        = Field(default="general", max_length=32)
+
+
+@app.post("/api/export/pdf")
+async def export_pdf(
+    body: PDFExportRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Genera y devuelve un PDF con la consulta, respuesta y fuentes citadas."""
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            generate_pdf,
+            query=body.query,
+            answer=body.answer,
+            sources=body.sources,
+            query_type=body.query_type,
+            user_name=current_user.get("name", ""),
+            user_company=current_user.get("company", ""),
+        )
+    except Exception as e:
+        logger.error(f"Error generando PDF: {e}")
+        raise HTTPException(status_code=500, detail="Error al generar el informe PDF")
+
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"consulta_aduanera_{ts}.pdf"
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -527,6 +675,39 @@ async def admin_queries_summary(client_id: Optional[str] = None):
     except Exception as e:
         logger.error(f"Error generando resumen de consultas: {e}")
         raise HTTPException(status_code=500, detail="Error al generar el resumen")
+
+
+# ------------------------------------------------------------------ #
+# Rutas: Changelog normativo (REQ-10)                                 #
+# ------------------------------------------------------------------ #
+@app.get("/api/admin/changelog")
+async def admin_changelog(
+    limit:       int            = 50,
+    offset:      int            = 0,
+    sector:      Optional[str]  = None,
+    change_type: Optional[str]  = None,
+    date_from:   Optional[str]  = None,
+    date_to:     Optional[str]  = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Lista el historial de cambios normativos detectados por el scraper.
+    Solo accesible para administradores.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acceso restringido a administradores")
+    try:
+        return get_changelog_page(
+            limit=min(limit, 200),
+            offset=offset,
+            sector=sector,
+            change_type=change_type,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except Exception as e:
+        logger.error(f"Error leyendo changelog: {e}")
+        raise HTTPException(status_code=500, detail="Error al leer el changelog normativo")
 
 
 # ------------------------------------------------------------------ #

@@ -1,11 +1,14 @@
 """
 Módulo de almacenamiento vectorial usando ChromaDB.
-Gestiona dos colecciones:
+Gestiona tres colecciones:
   - normativa_aduanera: documentos scrapeados de fuentes oficiales
   - documentos_internos: documentos subidos por el usuario
+  - cache_consultas: caché semántica de respuestas generadas
 """
 import hashlib
+import json
 import logging
+import time
 from typing import Any, Optional
 
 import chromadb
@@ -18,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NORMATIVA = "normativa_aduanera"
 COLLECTION_INTERNOS = "documentos_internos"
+COLLECTION_CACHE = "cache_consultas"
+
+CACHE_DISTANCE_THRESHOLD = 0.08   # similitud coseno ≥ 0.92
+CACHE_TTL_HOURS = 24              # tiempo de vida de entradas de caché
 
 
 class VectorStore:
@@ -31,6 +38,7 @@ class VectorStore:
         self._embedding_model: Optional[SentenceTransformer] = None
         self._collection_normativa = None
         self._collection_internos = None
+        self._collection_cache = None
         self._initialized = False
 
     def initialize(self):
@@ -62,6 +70,14 @@ class VectorStore:
                 },
             )
 
+            self._collection_cache = self._client.get_or_create_collection(
+                name=COLLECTION_CACHE,
+                metadata={
+                    "description": "Caché semántica de respuestas generadas",
+                    "hnsw:space": "cosine",
+                },
+            )
+
             logger.info("ChromaDB inicializado correctamente")
         except Exception as e:
             logger.error(f"Error inicializando ChromaDB: {e}")
@@ -88,6 +104,8 @@ class VectorStore:
             return self._collection_normativa
         elif collection_name == COLLECTION_INTERNOS:
             return self._collection_internos
+        elif collection_name == COLLECTION_CACHE:
+            return self._collection_cache
         else:
             raise ValueError(f"Colección desconocida: {collection_name}")
 
@@ -452,6 +470,79 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error listando documentos de '{collection_name}': {e}")
             return []
+
+    # ------------------------------------------------------------------ #
+    # Caché semántica                                                      #
+    # ------------------------------------------------------------------ #
+
+    def cache_lookup(self, query: str) -> dict | None:
+        """
+        Busca una respuesta cacheada semánticamente similar a la query.
+        Retorna dict con {answer, sources, query_type} si hay hit, None si no.
+        """
+        self._ensure_initialized()
+        try:
+            if self._collection_cache.count() == 0:
+                return None
+
+            embedding = self._embed([query])[0]
+            result = self._collection_cache.query(
+                query_embeddings=[embedding],
+                n_results=1,
+                include=["documents", "metadatas", "distances"],
+            )
+
+            if not result or not result.get("ids") or not result["ids"][0]:
+                return None
+
+            distance = result["distances"][0][0]
+            if distance > CACHE_DISTANCE_THRESHOLD:
+                return None
+
+            meta = result["metadatas"][0][0]
+            created_at = float(meta.get("created_at", 0))
+            age_hours = (time.time() - created_at) / 3600
+            if age_hours > CACHE_TTL_HOURS:
+                return None
+
+            sources = json.loads(meta.get("sources_json", "[]"))
+            logger.info(f"[cache] HIT (distancia={distance:.4f}, edad={age_hours:.1f}h)")
+            return {
+                "answer": meta.get("answer", ""),
+                "sources": sources,
+                "query_type": meta.get("query_type", "general"),
+                "cache_hit": True,
+            }
+        except Exception as e:
+            logger.warning(f"[cache] Error en lookup: {e}")
+            return None
+
+    def cache_store(
+        self,
+        query: str,
+        answer: str,
+        sources: list,
+        query_type: str,
+    ) -> None:
+        """Almacena una respuesta en el caché semántico."""
+        self._ensure_initialized()
+        try:
+            embedding = self._embed([query])[0]
+            cache_id = hashlib.sha256(query.encode()).hexdigest()[:16]
+            self._collection_cache.upsert(
+                ids=[cache_id],
+                embeddings=[embedding],
+                documents=[query],
+                metadatas=[{
+                    "answer": answer[:8000],  # limite de seguridad
+                    "sources_json": json.dumps(sources, ensure_ascii=False)[:4000],
+                    "query_type": query_type,
+                    "created_at": float(time.time()),
+                }],
+            )
+            logger.info(f"[cache] Almacenado: {cache_id}")
+        except Exception as e:
+            logger.warning(f"[cache] Error almacenando: {e}")
 
     def close(self):
         """Cierra la conexión con ChromaDB."""

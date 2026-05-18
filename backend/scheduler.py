@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config import DATA_DIR, LOGS_DIR
+from backend.config import ANTHROPIC_API_KEY, DATA_DIR, LOGS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,35 @@ def _save_status(status: dict[str, Any]):
         logger.error(f"No se pudo guardar el estado del scheduler: {e}")
 
 
+async def _generate_doc_summary(title: str, content: str) -> str:
+    """
+    Genera un resumen de 80 palabras del documento usando Claude Haiku.
+    Retorna cadena vacía si la API no está disponible.
+    """
+    if not ANTHROPIC_API_KEY:
+        return ""
+    try:
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Resume en máximo 80 palabras este documento de normativa aduanera chilena. "
+                    "Incluye: tipo de norma, número/identificador (si aplica), tema principal y fecha. "
+                    "Solo el resumen, sin prefijos ni explicaciones.\n\n"
+                    f"TÍTULO: {title}\n\nCONTENIDO:\n{content}"
+                ),
+            }],
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        logger.warning(f"No se pudo generar resumen para '{title}': {e}")
+        return ""
+
+
 async def _run_all_scrapers() -> dict[str, Any]:
     """
     Ejecuta todos los scrapers e indexa los documentos obtenidos.
@@ -100,6 +129,9 @@ async def _run_all_scrapers() -> dict[str, Any]:
     from backend.scrapers import AduanaScraper, BCNScraper, SIIScraper, DiarioOficialScraper
     from backend.indexer.document_processor import DocumentProcessor
     from backend.indexer.vectorstore import VectorStore, COLLECTION_NORMATIVA
+    from backend.normative_changelog import (
+        add_change, get_stored_hash, upsert_document_hash,
+    )
 
     start_time = datetime.now(timezone.utc)
     scraper_log.info("=" * 60)
@@ -144,44 +176,90 @@ async def _run_all_scrapers() -> dict[str, Any]:
 
                 for doc in documents:
                     try:
-                        url = doc.get("url", "")
+                        url     = doc.get("url", "")
                         content = doc.get("content", "")
+                        title   = doc.get("title", "Sin título")
+                        doc_date = doc.get("date", "")
 
                         if not content or len(content.strip()) < 50:
                             continue
 
-                        # Verificar si ya está indexado
-                        if url and vector_store.is_document_indexed(
-                            url, id_type="url", collection_name=COLLECTION_NORMATIVA
-                        ):
+                        new_hash = processor.compute_text_hash(content)
+                        doc_id   = new_hash[:16]
+
+                        # ── Detectar si es nuevo o modificación ──────────────
+                        stored    = get_stored_hash(url) if url else None
+                        is_new    = stored is None
+                        is_changed = stored is not None and stored["content_hash"] != new_hash
+
+                        # Si no cambió nada, saltar
+                        if not is_new and not is_changed:
                             continue
 
-                        # Verificar por hash de contenido
-                        content_hash = processor.compute_text_hash(content)
-                        if vector_store.is_document_indexed(
-                            content_hash, id_type="doc_id", collection_name=COLLECTION_NORMATIVA
-                        ):
-                            continue
+                        change_type = "incorporacion" if is_new else "modificacion"
+                        prev_id     = None
+
+                        # Si es modificación, eliminar chunks anteriores de ChromaDB
+                        if is_changed:
+                            old_doc_id = stored["doc_id"]
+                            try:
+                                vector_store.delete_document(old_doc_id, COLLECTION_NORMATIVA)
+                                scraper_log.info(
+                                    f"Chunks anteriores eliminados de ChromaDB: {old_doc_id}"
+                                )
+                            except Exception as e:
+                                scraper_log.warning(f"No se pudieron eliminar chunks viejos: {e}")
 
                         # Procesar y crear chunks
                         metadata = {
-                            "title": doc.get("title", "Sin título"),
-                            "url": url,
-                            "date": doc.get("date", ""),
+                            "title":        title,
+                            "url":          url,
+                            "date":         doc_date,
                             "content_type": doc.get("content_type", "normativa"),
-                            "source": doc.get("source", scraper_name),
-                            "doc_id": content_hash[:16],
+                            "source":       doc.get("source", scraper_name),
+                            "doc_id":       doc_id,
+                            "change_type":  change_type,
+                            "version":      "1.0",
+                            "is_active":    "1",
                         }
 
                         chunks = processor.process_text(content, metadata)
 
                         if chunks:
-                            added = vector_store.add_documents(
-                                chunks, COLLECTION_NORMATIVA
-                            )
+                            added = vector_store.add_documents(chunks, COLLECTION_NORMATIVA)
                             if added > 0:
                                 scraper_docs += 1
                                 total_docs_added += 1
+
+                                # ── Generar resumen con Haiku ─────────────────
+                                summary = await _generate_doc_summary(title, content[:2000])
+
+                                # ── Registrar en changelog ────────────────────
+                                prev_id = add_change(
+                                    document_id=doc_id,
+                                    title=title,
+                                    change_type=change_type,
+                                    change_date=doc_date or start_time.strftime("%Y-%m-%d"),
+                                    source_url=url,
+                                    summary=summary,
+                                    content_hash=new_hash,
+                                    sector="aduanas",
+                                    previous_version_id=prev_id,
+                                )
+
+                                # ── Actualizar hash almacenado ────────────────
+                                if url:
+                                    upsert_document_hash(
+                                        url=url,
+                                        content_hash=new_hash,
+                                        doc_id=doc_id,
+                                        title=title,
+                                        sector="aduanas",
+                                    )
+
+                                scraper_log.info(
+                                    f"[{change_type.upper()}] {title} — {url or 'sin URL'}"
+                                )
 
                     except Exception as e:
                         logger.error(f"Error procesando doc de {scraper_name}: {e}")

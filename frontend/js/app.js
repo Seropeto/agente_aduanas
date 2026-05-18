@@ -251,6 +251,15 @@ function imgThumbError(img) {
 // ================================================================
 // Estado global
 // ================================================================
+function getOrCreateSessionId() {
+  let sid = sessionStorage.getItem('chat_session_id');
+  if (!sid) {
+    sid = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    sessionStorage.setItem('chat_session_id', sid);
+  }
+  return sid;
+}
+
 const state = {
   currentFilter: 'all',
   messages: [],
@@ -258,6 +267,7 @@ const state = {
   isLoading: false,
   scraperPollingInterval: null,
   sidebarOpen: true,
+  sessionId: getOrCreateSessionId(),
 };
 
 const FILTER_LABELS = {
@@ -369,7 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ================================================================
-// Chat
+// Chat (streaming SSE)
 // ================================================================
 async function sendMessage() {
   const input = document.getElementById('chatInput');
@@ -377,28 +387,32 @@ async function sendMessage() {
 
   if (!query || state.isLoading) return;
 
-  // Ocultar pantalla de bienvenida
   hideWelcomeScreen();
-
-  // Añadir mensaje del usuario
   addUserMessage(query);
   input.value = '';
   autoResize(input);
 
-  // Mostrar indicador de carga
-  const loadingId = addLoadingMessage();
-
   state.isLoading = true;
   setInputEnabled(false);
 
+  // Crear burbuja de respuesta con indicador de etapa y cursor
+  const msgId = generateId();
+  const msgEl = createStreamingMessageEl(msgId);
+  document.getElementById('messagesContainer').appendChild(msgEl);
+  scrollToBottom();
+
+  const stageEl  = msgEl.querySelector('.stream-stage');
+  const textEl   = msgEl.querySelector('.stream-text');
+  const cursorEl = msgEl.querySelector('.stream-cursor');
+
+  let accumulatedText = '';
+  let firstToken = false;
+
   try {
-    const response = await apiFetch('/api/chat', {
+    const response = await apiFetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: query,
-        filter: state.currentFilter,
-      }),
+      body: JSON.stringify({ query, filter: state.currentFilter, session_id: state.sessionId }),
     });
 
     if (!response.ok) {
@@ -406,18 +420,68 @@ async function sendMessage() {
       throw new Error(err.detail || `Error ${response.status}`);
     }
 
-    const data = await response.json();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    // Reemplazar mensaje de carga con la respuesta
-    removeMessage(loadingId);
-    addAssistantMessage(data.answer, data.sources || []);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // conservar fragmento de línea incompleta
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (payload.type === 'stage') {
+          // Mostrar etapa solo mientras no hayan llegado tokens
+          if (!firstToken) stageEl.textContent = payload.text;
+
+        } else if (payload.type === 'token') {
+          if (!firstToken) {
+            firstToken = true;
+            stageEl.style.display = 'none';
+          }
+          accumulatedText += payload.text;
+          textEl.textContent = accumulatedText;
+          scrollToBottom();
+
+        } else if (payload.type === 'done') {
+          cursorEl.style.display = 'none';
+          // Aplicar formato markdown completo al finalizar
+          textEl.innerHTML = formatMessageText(accumulatedText);
+          const sourcesHtml = buildSourcesHtml(payload.sources || []);
+          const bubble = msgEl.querySelector('.message-bubble');
+          if (sourcesHtml) {
+            const div = document.createElement('div');
+            div.innerHTML = sourcesHtml;
+            bubble.appendChild(div);
+          }
+          // Botón exportar PDF (REQ-11)
+          bubble.appendChild(buildPdfButton(query, accumulatedText, payload.sources || [], payload.query_type || 'general'));
+          state.messages.push({
+            id: msgId, role: 'assistant',
+            text: accumulatedText, sources: payload.sources || [],
+          });
+          scrollToBottom();
+
+        } else if (payload.type === 'error') {
+          cursorEl.style.display = 'none';
+          stageEl.style.display = 'none';
+          textEl.textContent = payload.text;
+          showToast('Error al procesar la consulta', 'error');
+        }
+      }
+    }
 
   } catch (error) {
-    removeMessage(loadingId);
-    addAssistantMessage(
-      `Lo siento, ocurrió un error al procesar su consulta: ${error.message}`,
-      []
-    );
+    cursorEl.style.display = 'none';
+    stageEl.style.display = 'none';
+    textEl.textContent = `Lo siento, ocurrió un error: ${error.message}`;
     showToast('Error al conectar con el servidor', 'error');
   } finally {
     state.isLoading = false;
@@ -468,10 +532,16 @@ function removeMessage(id) {
   if (el) el.remove();
 }
 
-function clearChat() {
+async function clearChat() {
   state.messages = [];
   document.getElementById('messagesContainer').innerHTML = '';
   document.getElementById('welcomeScreen').style.display = '';
+  // Nuevo session_id para la próxima sesión
+  const newSid = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  sessionStorage.setItem('chat_session_id', newSid);
+  state.sessionId = newSid;
+  // Limpiar historial en el servidor (no bloqueante)
+  apiFetch('/api/memory', { method: 'DELETE' }).catch(() => {});
   focusChatInput();
 }
 
@@ -534,6 +604,28 @@ function createLoadingMessageEl(id) {
         <div class="typing-dots">
           <span></span><span></span><span></span>
         </div>
+      </div>
+    </div>
+  `;
+  return el;
+}
+
+function createStreamingMessageEl(id) {
+  const el = document.createElement('div');
+  el.id = `msg-${id}`;
+  el.className = 'message message--assistant';
+  el.innerHTML = `
+    <div class="message-avatar">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+    </div>
+    <div class="message-bubble">
+      <div class="message-text">
+        <span class="stream-stage" style="opacity:0.6; font-style:italic;">Iniciando...</span>
+        <span class="stream-text"></span>
+        <span class="stream-cursor">▋</span>
       </div>
     </div>
   `;
@@ -1378,5 +1470,62 @@ function formatDateRelative(isoString) {
     });
   } catch (e) {
     return isoString;
+  }
+}
+
+// ================================================================
+// Exportar PDF (REQ-11)
+// ================================================================
+function buildPdfButton(query, answer, sources, queryType) {
+  const btn = document.createElement('button');
+  btn.className = 'pdf-export-btn';
+  btn.title = 'Descargar informe en PDF';
+  btn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" class="pdf-icon">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    <span>Exportar PDF</span>
+  `;
+  btn.addEventListener('click', () => downloadPdf(btn, query, answer, sources, queryType));
+  return btn;
+}
+
+async function downloadPdf(btn, query, answer, sources, queryType) {
+  if (btn.disabled) return;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span>Generando...</span>';
+
+  try {
+    const res = await apiFetch('/api/export/pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, answer, sources, query_type: queryType }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Error desconocido' }));
+      throw new Error(err.detail || `Error ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const ts   = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+    a.href     = url;
+    a.download = `consulta_aduanera_${ts}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('PDF descargado correctamente', 'success');
+  } catch (e) {
+    showToast(`Error al generar PDF: ${e.message}`, 'error');
+  } finally {
+    btn.disabled  = false;
+    btn.innerHTML = originalHtml;
   }
 }
