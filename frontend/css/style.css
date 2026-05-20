@@ -1545,6 +1545,21 @@ body {
   color: white;
 }
 
+.scope-notice {
+  flex-shrink: 0;
+  padding: 6px 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  text-align: center;
+  line-height: 1.4;
+}
+
+.scope-notice strong {
+  color: var(--text-secondary);
+}
+
 .input-hint {
   margin-top: 6px;
   font-size: 11px;
