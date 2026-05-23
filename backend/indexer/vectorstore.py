@@ -291,6 +291,74 @@ class VectorStore:
 
         return results
 
+    def get_chunks_by_title_fragment(
+        self,
+        title_fragment: str,
+        collection_name: str = COLLECTION_INTERNOS,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Devuelve los chunks cuyo título o filename contenga el fragmento dado.
+        Usa filtrado client-side porque ChromaDB no soporta $contains en metadata.
+        Si se proporciona user_id, solo devuelve documentos de ese usuario.
+        """
+        self._ensure_initialized()
+        collection = self._get_collection(collection_name)
+
+        try:
+            count = collection.count()
+            if count == 0:
+                return []
+
+            results = collection.get(
+                limit=min(count, 10000),
+                include=["documents", "metadatas"],
+            )
+
+            if not results or not results.get("ids"):
+                return []
+
+            fragment = title_fragment.lower()
+            # Palabras significativas del fragmento (≥3 chars) para matching flexible
+            frag_words = [w for w in fragment.split() if len(w) >= 3]
+
+            logger.debug(
+                f"[title_search] fragment='{fragment}' words={frag_words} "
+                f"user_id={user_id!r} total_chunks={len(results['metadatas'])}"
+            )
+
+            matched = []
+            for i, meta in enumerate(results["metadatas"]):
+                stored_uid = meta.get("user_id")
+                title    = meta.get("title", "").lower()
+                filename = meta.get("filename", "").lower()
+
+                # Filtrar por usuario si se proporciona
+                if user_id and stored_uid and stored_uid != user_id:
+                    continue
+
+                # Tier 1: coincidencia exacta de substring
+                exact = fragment in title or fragment in filename
+                # Tier 2: todas las palabras del fragmento aparecen en título o filename
+                word_match = bool(frag_words) and all(
+                    w in title or w in filename for w in frag_words
+                )
+
+                if exact or word_match:
+                    matched.append({
+                        "text":            results["documents"][i],
+                        "metadata":        meta,
+                        "distance":        0.0,
+                        "collection":      collection_name,
+                        "relevance_score": 1.0,
+                    })
+
+            return matched
+
+        except Exception as e:
+            logger.error(f"Error en búsqueda por título '{title_fragment}': {e}")
+            return []
+
     # ------------------------------------------------------------------ #
     # Eliminación                                                          #
     # ------------------------------------------------------------------ #

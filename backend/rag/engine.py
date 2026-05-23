@@ -43,6 +43,17 @@ COMPLEX_KEYWORDS = [
 # aparezcan en consultas de normativa general.
 INTERNAL_MAX_DISTANCE = 0.40   # ≥ 60 % de similitud semántica requerida
 NORMATIVA_MAX_DISTANCE = 0.50  # ≥ 50 % de similitud — balance entre relevancia y cobertura
+
+# Señales que indican que el usuario busca un documento interno específico
+INTERNAL_DOC_SIGNALS = [
+    "documentación interna", "documento interno", "documentos internos",
+    "mis documentos", "documento que subí", "archivo que subí",
+    "el archivo que", "documento subido", "archivo subido",
+    "busca en mis", "busca el documento", "busca el archivo",
+    "encuentra el documento", "encuentra el archivo",
+    "en mis documentos", "en la documentación interna",
+]
+
 from backend.indexer.vectorstore import (
     VectorStore,
     COLLECTION_NORMATIVA,
@@ -183,6 +194,33 @@ class RAGEngine:
         logger.info(f"Modelo seleccionado: {model} (complejidad: {complexity})")
         return model
 
+    def _is_internal_doc_query(self, query: str) -> bool:
+        """Detecta si la consulta busca un documento interno específico."""
+        q = query.lower()
+        return any(signal in q for signal in INTERNAL_DOC_SIGNALS)
+
+    def _extract_title_fragment(self, query: str) -> str:
+        """
+        Extrae el posible nombre de documento de la consulta.
+        Prioridad: patrón filename con guiones > indicador de nombre > query corta completa.
+        """
+        # Patrón filename: secuencia alfanumérica con guiones (ej: declaracion-sag-660x825)
+        match = re.search(r'[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\w]+-[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\w\-]+', query)
+        if match:
+            return match.group(0)
+        # Frase después de indicadores de nombre
+        name_match = re.search(
+            r'(?:nombre|llamado|titulado|llama|llamo|archivo|documento)\s+["\']?([^\s"\']{4,})',
+            query, re.IGNORECASE,
+        )
+        if name_match:
+            return name_match.group(1).strip('.,;:')
+        # Query corta (≤5 palabras): tratar la consulta completa como título a buscar
+        words = query.strip().split()
+        if 1 <= len(words) <= 5:
+            return query.strip()
+        return ""
+
     def _determine_collection_priority(
         self,
         query_type: str,
@@ -294,8 +332,25 @@ class RAGEngine:
         date_str = f" ({date})" if date else ""
         return f"{type_str}: {title}{date_str} — {source}"
 
-    def _build_user_message(self, query: str, context: str, query_type: str) -> str:
+    def _build_user_message(
+        self, query: str, context: str, query_type: str, has_internal_results: bool = False
+    ) -> str:
         """Construye el mensaje del usuario para Claude."""
+        # Cuando hay documentos internos recuperados por título, Claude debe mostrar
+        # el contenido directamente sin aplicar restricciones de ámbito aduanero.
+        if has_internal_results and context:
+            return f"""CONSULTA DE DOCUMENTOS INTERNOS DEL USUARIO
+
+El usuario está buscando en sus propios documentos subidos al sistema. Los siguientes archivos coinciden con su búsqueda:
+
+{context}
+
+---
+
+Solicitud: {query}
+
+INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuario, NO una consulta de normativa aduanera. Las reglas de "fuera de ámbito" NO aplican aquí. Muestra directamente la información del documento encontrado: fechas, emisores, RUT, montos, ítems, y cualquier otro dato presente. Organiza la información de forma clara y estructurada."""
+
         type_hints = {
             "arancelaria": "Esta es una consulta sobre clasificación arancelaria o tarifas.",
             "tramite": "Esta es una consulta sobre procedimientos o trámites aduaneros.",
@@ -467,6 +522,10 @@ Responde como experto en normativa aduanera chilena. Reglas:
         async def _cache():
             if filter_collection != "all":
                 return None
+            # Si la consulta puede apuntar a un doc interno, no usar caché
+            # (el caché no es por usuario y podría servir respuestas de otro usuario)
+            if self._extract_title_fragment(query):
+                return None
             try:
                 return await asyncio.to_thread(self.vector_store.cache_lookup, query)
             except Exception as e:
@@ -488,7 +547,15 @@ Responde como experto en normativa aduanera chilena. Reglas:
             asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id),
         )
 
-        if cached:
+        # Detectar si hay documentos internos recuperados por coincidencia de título
+        # (distance=0.0 es la marca que usa get_chunks_by_title_fragment)
+        has_internal_results = any(
+            r.get("distance", 1.0) == 0.0 and r.get("collection") == COLLECTION_INTERNOS
+            for r in top_results
+        )
+
+        # No usar caché cuando hay docs internos
+        if cached and not has_internal_results:
             return {
                 "answer": cached["answer"],
                 "sources": cached["sources"],
@@ -498,7 +565,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
             }
 
         # 3. Construir mensajes para Claude
-        user_message = self._build_user_message(query, context_text, query_type)
+        user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
         # 4. Llamar a Claude (cliente async)
@@ -545,7 +612,8 @@ Responde como experto en normativa aduanera chilena. Reglas:
             except Exception as e:
                 logger.warning(f"Error guardando turno en memoria: {e}")
 
-        if answer and not answer.startswith("Error:") and filter_collection == "all":
+        # No cachear respuestas con documentos internos: son específicas por usuario
+        if answer and not answer.startswith("Error:") and filter_collection == "all" and not has_internal_results:
             try:
                 self.vector_store.cache_store(query, answer, sources, query_type)
             except Exception as e:
@@ -605,9 +673,37 @@ Responde como experto en normativa aduanera chilena. Reglas:
         """
         Recupera documentos del vector store, filtra y construye contexto.
         Retorna (top_results, context_text, sources).
-        """
-        collection_strategy = self._determine_collection_priority(query_type, filter_collection)
 
+        Búsqueda híbrida:
+        1. Siempre intenta búsqueda por título en internos si el filtro lo permite.
+        2. Si la consulta tiene señales explícitas de documento interno, fuerza
+           la búsqueda semántica a INTERNOS únicamente.
+        3. Los resultados por título se anteponen con relevancia máxima.
+        """
+        # Paso 1: búsqueda por título en internos (aditiva, no excluye normativa)
+        title_results = []
+        if filter_collection in ("all", "internos"):
+            title_fragment = self._extract_title_fragment(query)
+            if title_fragment:
+                try:
+                    title_results = self.vector_store.get_chunks_by_title_fragment(
+                        title_fragment, COLLECTION_INTERNOS, user_id=user_id
+                    )
+                    if title_results:
+                        logger.info(
+                            f"Búsqueda por título '{title_fragment}': "
+                            f"{len(title_results)} chunks encontrados"
+                        )
+                except Exception as e:
+                    logger.warning(f"Error en búsqueda por título: {e}")
+
+        # Paso 2: si la consulta pide explícitamente documentos internos,
+        # la búsqueda semántica se restringe a esa colección
+        is_internal_only = self._is_internal_doc_query(query) and filter_collection == "all"
+        effective_filter = "internos" if is_internal_only else filter_collection
+        collection_strategy = self._determine_collection_priority(query_type, effective_filter)
+
+        # Paso 3: búsqueda semántica
         all_results = []
         for collection_name, top_k in collection_strategy:
             try:
@@ -624,7 +720,53 @@ Responde como experto en normativa aduanera chilena. Reglas:
             except Exception as e:
                 logger.error(f"Error buscando en {collection_name}: {e}")
 
-        if filter_collection == "all":
+        # Paso 4: anteponer resultados por título (distance=0 → máxima prioridad)
+        if title_results:
+            # Ya tenemos el documento específico por título — no mezclar otros
+            # documentos internos del semántico; solo agregar resultados normativos
+            seen_texts = {r["text"] for r in title_results}
+            normativa_only = [
+                r for r in all_results
+                if r.get("collection") != COLLECTION_INTERNOS
+                and r["text"] not in seen_texts
+            ]
+            all_results = title_results + normativa_only
+        elif title_fragment and filter_collection == "all":
+            # Paso 4b: fallback — búsqueda semántica dedicada en internos cuando el
+            # title search no encontró coincidencias (puede ser discrepancia en metadatos)
+            try:
+                meta_filter = {"user_id": user_id} if user_id else None
+                fallback = self.vector_store.search(
+                    query=query,
+                    collection_name=COLLECTION_INTERNOS,
+                    top_k=TOP_K_RESULTS,
+                    filter_metadata=meta_filter,
+                )
+                if fallback:
+                    # Identificar el documento más relevante (primer resultado)
+                    best_meta = fallback[0].get("metadata", {})
+                    best_doc_id = best_meta.get("doc_id") or best_meta.get("filename", "")
+                    # Incluir todos los chunks del mismo documento
+                    best_chunks = [
+                        r for r in fallback
+                        if (r.get("metadata", {}).get("doc_id") or
+                            r.get("metadata", {}).get("filename", "")) == best_doc_id
+                    ] if best_doc_id else fallback[:1]
+                    for r in best_chunks:
+                        r["distance"] = 0.0
+                    seen_texts = {r["text"] for r in best_chunks}
+                    normativa_only = [r for r in all_results if r["text"] not in seen_texts]
+                    all_results = best_chunks + normativa_only
+                    logger.info(
+                        f"Fallback semántico en internos: {len(fallback)} chunks disponibles, "
+                        f"usando {len(best_chunks)} del doc '{best_doc_id}'"
+                    )
+            except Exception as e:
+                logger.warning(f"Error en fallback semántico internos: {e}")
+
+        # Paso 5: filtro de distancia solo para búsquedas mixtas (all)
+        # Los title_results (distance=0) siempre pasan este filtro
+        if effective_filter == "all":
             filtered = []
             for r in all_results:
                 d = r.get("distance", 1.0)
@@ -701,6 +843,9 @@ Responde como experto en normativa aduanera chilena. Reglas:
         async def _cache():
             if filter_collection != "all":
                 return None
+            # Bypass caché si la consulta puede apuntar a un doc interno
+            if self._extract_title_fragment(query):
+                return None
             try:
                 return await asyncio.to_thread(self.vector_store.cache_lookup, query)
             except Exception as e:
@@ -722,7 +867,14 @@ Responde como experto en normativa aduanera chilena. Reglas:
             asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id),
         )
 
-        if cached:
+        # Detectar documentos internos recuperados por título (distance=0.0)
+        has_internal_results = any(
+            r.get("distance", 1.0) == 0.0 and r.get("collection") == COLLECTION_INTERNOS
+            for r in top_results
+        )
+
+        # No usar caché para consultas con documentos internos
+        if cached and not has_internal_results:
             logger.info("[stream] Cache hit — devolviendo respuesta cacheada")
             yield _sse({"type": "stage", "text": "Respuesta encontrada en caché..."})
             yield _sse({"type": "token", "text": cached["answer"]})
@@ -737,7 +889,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
 
         yield _sse({"type": "stage", "text": "Generando respuesta..."})
 
-        user_message = self._build_user_message(query, context_text, query_type)
+        user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
         full_answer = ""
@@ -784,7 +936,8 @@ Responde como experto en normativa aduanera chilena. Reglas:
             except Exception as e:
                 logger.warning(f"[stream] Error guardando turno en memoria: {e}")
 
-        if full_answer and filter_collection == "all":
+        # No cachear respuestas con documentos internos
+        if full_answer and filter_collection == "all" and not has_internal_results:
             try:
                 self.vector_store.cache_store(query, full_answer, sources, query_type)
             except Exception as e:
