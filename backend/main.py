@@ -32,13 +32,10 @@ from backend.pdf_export import generate_pdf
 from backend.normative_changelog import initialize_changelog_db, get_changelog_page
 
 # ------------------------------------------------------------------ #
-# Configuración de logging                                             #
+# Telemetría (logging estructurado + Sentry)                           #
 # ------------------------------------------------------------------ #
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+from backend.telemetry import init_telemetry
+init_telemetry()
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
@@ -145,6 +142,46 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ------------------------------------------------------------------ #
+# Middleware de telemetría HTTP                                         #
+# ------------------------------------------------------------------ #
+import time as _time
+import uuid as _uuid
+
+_http_logger = logging.getLogger("telemetry.http")
+
+@app.middleware("http")
+async def telemetry_middleware(request: Request, call_next):
+    request_id = _uuid.uuid4().hex[:8]
+    t0 = _time.perf_counter()
+
+    response = await call_next(request)
+
+    duration_ms = round((_time.perf_counter() - t0) * 1000, 1)
+    status_code = response.status_code
+    path = request.url.path
+
+    # Omitir rutas de archivos estáticos para no saturar los logs
+    if not path.startswith(("/static", "/api/uploads", "/favicon")):
+        level = logging.WARNING if status_code >= 500 else logging.INFO
+        _http_logger.log(
+            level,
+            "http_request",
+            extra={
+                "event":       "http_request",
+                "request_id":  request_id,
+                "method":      request.method,
+                "path":        path,
+                "status_code": status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time"] = f"{duration_ms}ms"
+    return response
 
 
 # ------------------------------------------------------------------ #

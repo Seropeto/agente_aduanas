@@ -5,6 +5,7 @@ Integra ChromaDB para recuperación de documentos y Claude para generación de r
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Optional
 
 import json
@@ -12,6 +13,7 @@ import json
 import anthropic
 
 from backend.config import ANTHROPIC_API_KEY, MODEL_NAME, TOP_K_RESULTS
+from backend.telemetry import log_llm_call
 from backend.memory import (
     get_history, save_turn,
     needs_summary_update, get_turns_to_summarize, save_summary,
@@ -595,15 +597,26 @@ Responde como experto en normativa aduanera chilena. Reglas:
 
         # 4. Llamar a Claude (cliente async)
         answer = ""
+        selected_model = self._select_model(query)
         try:
             client = self._get_async_anthropic_client()
+            _t_llm = time.perf_counter()
             response = await client.messages.create(
-                model=self._select_model(query),
+                model=selected_model,
                 max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=messages,
             )
+            _llm_ms = (time.perf_counter() - _t_llm) * 1000
             answer = response.content[0].text
+            log_llm_call(
+                model=selected_model,
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+                duration_ms=_llm_ms,
+                query_type=query_type,
+                document_id=document_id,
+            )
         except anthropic.AuthenticationError:
             logger.error("Error de autenticación con la API de Anthropic")
             answer = (
@@ -945,10 +958,12 @@ Responde como experto en normativa aduanera chilena. Reglas:
         messages = [*history, {"role": "user", "content": user_message}]
 
         full_answer = ""
+        _stream_model = self._select_model(query)
         try:
             client = self._get_async_anthropic_client()
+            _t_llm = time.perf_counter()
             async with client.messages.stream(
-                model=self._select_model(query),
+                model=_stream_model,
                 max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=messages,
@@ -956,6 +971,20 @@ Responde como experto en normativa aduanera chilena. Reglas:
                 async for text in stream.text_stream:
                     full_answer += text
                     yield _sse({"type": "token", "text": text})
+                # Capturar tokens al finalizar el stream
+                try:
+                    _final = await stream.get_final_message()
+                    _llm_ms = (time.perf_counter() - _t_llm) * 1000
+                    log_llm_call(
+                        model=_stream_model,
+                        prompt_tokens=_final.usage.input_tokens,
+                        completion_tokens=_final.usage.output_tokens,
+                        duration_ms=_llm_ms,
+                        query_type=query_type,
+                        document_id=document_id,
+                    )
+                except Exception as _te:
+                    logger.warning(f"[stream] No se pudo capturar uso de tokens: {_te}")
 
         except anthropic.AuthenticationError:
             logger.error("[stream] Error de autenticación con Anthropic")

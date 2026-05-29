@@ -16,6 +16,7 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
 from backend.config import CHROMA_DIR, EMBEDDING_MODEL
+from backend.telemetry import trace_vector_search
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,8 @@ class VectorStore:
                 if filter_metadata:
                     query_params["where"] = filter_metadata
 
-                response = collection.query(**query_params)
+                with trace_vector_search(collection=coll_name, top_k=top_k):
+                    response = collection.query(**query_params)
 
                 if not response or not response.get("ids"):
                     continue
