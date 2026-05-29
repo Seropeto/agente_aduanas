@@ -12,8 +12,11 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Umbral para activar OCR: si el texto extraído tiene menos de 100 chars
+# Umbral global: activa OCR si el documento completo tiene menos de 100 chars
 OCR_THRESHOLD = 100
+# Umbral por página: activa OCR para esa página si extrae menos de 50 chars
+# Captura páginas con firmas/sellos que bloquean la extracción de pdfplumber
+OCR_PAGE_THRESHOLD = 50
 CHUNK_SIZE = 500   # palabras
 CHUNK_OVERLAP = 50  # palabras
 
@@ -149,16 +152,80 @@ class DocumentProcessor:
 
         return text
 
+    def _configure_tesseract(self) -> str:
+        """
+        Localiza el ejecutable de Tesseract y configura pytesseract.
+        Retorna el idioma disponible: 'spa+eng' si hay spa.traineddata, 'eng' si no.
+        Centraliza la lógica que antes estaba duplicada en _extract_image.
+        """
+        import sys
+        import os
+        import shutil
+        import pytesseract
+
+        if sys.platform == "win32" and not shutil.which("tesseract"):
+            for candidate in [
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                r"C:\Users\HP\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
+            ]:
+                if Path(candidate).exists():
+                    pytesseract.pytesseract.tesseract_cmd = candidate
+                    break
+
+        # Determinar qué paquete de idioma usar
+        tessdata_dirs = [
+            Path.home() / "tessdata",
+            Path(r"C:\Program Files\Tesseract-OCR\tessdata"),
+            Path(os.environ.get("TESSDATA_PREFIX", "")),
+        ]
+        has_spa = any(
+            (d / "spa.traineddata").exists() for d in tessdata_dirs if d != Path("")
+        )
+        if has_spa:
+            for d in tessdata_dirs:
+                if d != Path("") and (d / "spa.traineddata").exists():
+                    os.environ.setdefault("TESSDATA_PREFIX", str(d))
+                    break
+            return "spa+eng"
+
+        logger.info("spa.traineddata no disponible, usando 'eng' para OCR")
+        return "eng"
+
     def _extract_pdf_pdfplumber(self, file_path: Path) -> str:
-        """Extrae texto de PDF usando pdfplumber."""
+        """
+        Extrae texto de PDF usando pdfplumber con OCR por página.
+        Cada página que produzca menos de OCR_PAGE_THRESHOLD chars se re-procesa
+        con pytesseract, garantizando que páginas con firmas/sellos no queden ciegas.
+        """
         try:
             import pdfplumber
             pages_text = []
             with pdfplumber.open(str(file_path)) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        pages_text.append(page_text)
+                for page_num, page in enumerate(pdf.pages):
+                    page_text = page.extract_text() or ""
+                    if len(page_text.strip()) < OCR_PAGE_THRESHOLD:
+                        logger.info(
+                            f"Página {page_num + 1}: {len(page_text.strip())} chars, "
+                            f"activando OCR individual"
+                        )
+                        try:
+                            import pytesseract
+                            lang = self._configure_tesseract()
+                            img = page.to_image(resolution=200)
+                            ocr_text = pytesseract.image_to_string(
+                                img.original, lang=lang, config="--psm 1 --oem 3"
+                            )
+                            if len(ocr_text.strip()) > len(page_text.strip()):
+                                page_text = ocr_text
+                                logger.info(
+                                    f"OCR página {page_num + 1} ({lang}): "
+                                    f"{len(page_text)} chars recuperados"
+                                )
+                        except Exception as e:
+                            logger.warning(f"OCR en página {page_num + 1} falló: {e}")
+                    if page_text.strip():
+                        pages_text.append(page_text.strip())
             return "\n\n".join(pages_text)
         except ImportError:
             logger.warning("pdfplumber no disponible, intentando PyPDF2")
@@ -186,25 +253,20 @@ class DocumentProcessor:
     def _extract_pdf_ocr(self, file_path: Path) -> str:
         """
         Convierte páginas del PDF a imágenes y aplica OCR con pytesseract.
-        Solo se activa cuando pdfplumber no extrae suficiente texto.
+        Solo se activa cuando pdfplumber no extrae suficiente texto en el documento completo.
         """
         try:
             import pytesseract
-            from PIL import Image
             import pdfplumber
 
+            lang = self._configure_tesseract()
             pages_text = []
             with pdfplumber.open(str(file_path)) as pdf:
                 for page_num, page in enumerate(pdf.pages):
                     try:
-                        # Convertir página a imagen
                         img = page.to_image(resolution=200)
-                        pil_img = img.original
-
-                        # OCR en español e inglés
                         ocr_text = pytesseract.image_to_string(
-                            pil_img, lang="spa+eng",
-                            config="--psm 1 --oem 3"
+                            img.original, lang=lang, config="--psm 1 --oem 3"
                         )
                         if ocr_text.strip():
                             pages_text.append(ocr_text)
@@ -248,35 +310,12 @@ class DocumentProcessor:
             import pytesseract
             from PIL import Image
 
-            # Configurar Tesseract en Windows
-            import sys, os, shutil
-            if sys.platform == "win32":
-                if not shutil.which("tesseract"):
-                    for candidate in [
-                        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                        r"C:\Users\HP\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
-                    ]:
-                        if Path(candidate).exists():
-                            pytesseract.pytesseract.tesseract_cmd = candidate
-                            break
-                # Usar tessdata del usuario si el de Program Files no tiene spa
-                user_tessdata = Path.home() / "tessdata"
-                sys_tessdata = Path(r"C:\Program Files\Tesseract-OCR\tessdata")
-                if user_tessdata.exists() and (user_tessdata / "spa.traineddata").exists():
-                    if not (sys_tessdata / "spa.traineddata").exists():
-                        os.environ["TESSDATA_PREFIX"] = str(user_tessdata)
-
+            lang = self._configure_tesseract()
             img = Image.open(str(file_path))
-            # Convertir a RGB si es necesario (TIFF, BMP pueden ser otros modos)
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
 
-            # Intentar con español+inglés, si falla usar solo inglés
-            try:
-                text = pytesseract.image_to_string(img, lang="spa+eng", config="--psm 1 --oem 3")
-            except Exception:
-                text = pytesseract.image_to_string(img, lang="eng", config="--psm 1 --oem 3")
+            text = pytesseract.image_to_string(img, lang=lang, config="--psm 1 --oem 3")
             logger.info(f"OCR completado en {file_path.name}: {len(text)} chars extraídos")
             return text
         except ImportError:

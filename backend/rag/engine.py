@@ -52,7 +52,18 @@ INTERNAL_DOC_SIGNALS = [
     "busca en mis", "busca el documento", "busca el archivo",
     "encuentra el documento", "encuentra el archivo",
     "en mis documentos", "en la documentación interna",
+    # Referencia explícita a documento cargado (dictámenes, resoluciones, etc.)
+    # NOTA: mantener señales específicas — evitar frases genéricas que rompan búsquedas normativas
+    "el dictamen", "dictamen normativo", "dictamen cargado",
+    "documento cargado", "pdf cargado", "archivo cargado",
+    "que cargué", "que cargue", "que subi", "que subí",
+    "normativo cargado",
 ]
+
+# Número de chunks a recuperar de la colección de documentos internos.
+# Más alto que TOP_K_RESULTS para cubrir documentos legales extensos (dictámenes,
+# resoluciones) donde la conclusión puede estar en la última página/chunk.
+TOP_K_INTERNOS = 8
 
 from backend.indexer.vectorstore import (
     VectorStore,
@@ -118,7 +129,8 @@ Reglas absolutas:
 - Cita circulares y resoluciones con su número exacto. Estructura en listas cuando aplique.
 - Al usar fuentes del contexto, termina con: **Fuentes consultadas:** [lista]
 - Identificar el organismo regulador competente es conocimiento experto: SIEMPRE debes nombrarlo. Los dominios son mutuamente excluyentes — gas/combustibles → SEC; medicamentos/cosméticos → ISP; agropecuario → SAG — no los combines salvo que el producto requiera certificación de múltiples entidades.
-- El aviso ⚠️ aplica solo a requisitos procedimentales específicos (plazos, formularios, aranceles) que no estén respaldados por documentos del contexto. Ejemplo: "La importación de artefactos de gas requiere certificación SEC. ⚠️ Verificar requisitos procedimentales vigentes en www.sec.cl." """
+- El aviso ⚠️ aplica solo a requisitos procedimentales específicos (plazos, formularios, aranceles) que no estén respaldados por documentos del contexto. Ejemplo: "La importación de artefactos de gas requiere certificación SEC. ⚠️ Verificar requisitos procedimentales vigentes en www.sec.cl."
+- GUARDRAIL ANTI-ALUCINACIÓN DOCUMENTAL: Cuando el usuario solicite que respondas "basándote estrictamente" o "según" un documento específico cargado al sistema (dictamen, resolución, circular, archivo), y los fragmentos recuperados NO contengan explícitamente el dato solicitado (partida arancelaria, regla invocada, conclusión "SE DECLARA", nota de capítulo), debes responder EXACTAMENTE: "**Información no disponible en los fragmentos recuperados del documento.** Los fragmentos indexados no contienen [describir el dato buscado]. Esto puede indicar que una página del documento (por ejemplo, la página con la resolución final, firmas o sellos) no fue correctamente extraída en el momento de la indexación. Recomendamos re-cargar el documento para una nueva indexación." Está TERMINANTEMENTE PROHIBIDO inferir, deducir, calcular o inventar partidas arancelarias, reglas de interpretación o conclusiones legales de documentos que no estén explícita y literalmente presentes en el contexto recuperado. """
 
 
 class RAGEngine:
@@ -215,9 +227,17 @@ class RAGEngine:
         )
         if name_match:
             return name_match.group(1).strip('.,;:')
-        # Query corta (≤5 palabras): tratar la consulta completa como título a buscar
+        # Query corta (≤3 palabras) que NO sea una pregunta: posible título de documento
+        # Se excluyen preguntas (qué, cuál, cómo, etc.) para evitar tratar consultas
+        # normativas cortas como búsquedas de archivo.
+        QUESTION_STARTERS = {
+            "que", "qué", "cual", "cuál", "como", "cómo", "cuando", "cuándo",
+            "donde", "dónde", "por", "cuanto", "cuánto", "quién", "quien",
+            "hay", "existe", "tienen", "tiene", "es", "son",
+        }
         words = query.strip().split()
-        if 1 <= len(words) <= 5:
+        first_word = words[0].lower().strip("¿?") if words else ""
+        if 1 <= len(words) <= 3 and first_word not in QUESTION_STARTERS:
             return query.strip()
         return ""
 
@@ -236,7 +256,8 @@ class RAGEngine:
         if filter_override == "normativa":
             return [(COLLECTION_NORMATIVA, TOP_K_RESULTS)]
         elif filter_override == "internos":
-            return [(COLLECTION_INTERNOS, TOP_K_RESULTS)]
+            # Usar top_k mayor para cubrir documentos legales extensos (dictámenes, etc.)
+            return [(COLLECTION_INTERNOS, TOP_K_INTERNOS)]
 
         # Prioridad según tipo de consulta
         if query_type in ("arancelaria", "normativa"):
@@ -371,7 +392,8 @@ Consulta del usuario: {query}
 
 Instrucciones:
 - Usa los documentos anteriores como fuente principal y cítalos con precisión (nombre, número, fecha).
-- Si los documentos no contienen información suficiente, complementa con tu expertise en normativa aduanera chilena, pero sin mencionar limitaciones técnicas del sistema."""
+- Si la consulta hace referencia a un documento específico cargado ("basándote en", "según el dictamen", "en el archivo", etc.) y los fragmentos recuperados NO contienen el dato exacto solicitado (partida arancelaria, regla invocada, conclusión), aplica el GUARDRAIL ANTI-ALUCINACIÓN DOCUMENTAL del system prompt. No inventes ni deduzcas.
+- Para consultas generales de normativa aduanera donde no haya documentos específicos en contexto, puedes complementar con tu expertise técnico."""
         else:
             message = f"""{hint}
 Consulta del usuario: {query}
@@ -779,7 +801,10 @@ Responde como experto en normativa aduanera chilena. Reglas:
             all_results = filtered
 
         all_results.sort(key=lambda x: x.get("distance", 1.0))
-        top_results = all_results[:6]
+        # Usar cap mayor cuando se encontró un documento interno específico por título
+        # (puede tener hasta 10+ chunks en documentos legales extensos)
+        max_chunks = 10 if title_results else 6
+        top_results = all_results[:max_chunks]
         context_text, sources = self._build_context(top_results)
         return top_results, context_text, sources
 
