@@ -525,16 +525,46 @@
       AgentIA: Inteligencia Artificial para Aduanas y Comercio Exterior
   </h1>
 
-  <!-- Contenedor Responsive del Video -->
-  <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 560px; margin: 0 auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-      <iframe
-          style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
-          src="https://www.youtube.com/embed/GoAKeynBjNs?rel=0&modestbranding=1"
-          title="AgentIA Inteligencia Artificial para Aduanas y Comercio Exterior"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen>
+  <!-- Contenedor Responsive del Video (click-to-play) -->
+  <div style="max-width: 640px; margin: 0 auto; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+
+    <!-- Poster: se muestra antes de darle play -->
+    <div id="video-poster" onclick="activarVideo()"
+         style="position: relative; cursor: pointer; aspect-ratio: 16/9; background: #0a2a6e; overflow: hidden;">
+      <img src="/icons/icon-512.png" alt="Toxiro Digital"
+           style="width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s;"
+           onmouseover="this.style.transform='scale(1.03)'"
+           onmouseout="this.style.transform='scale(1)'">
+      <!-- Botón play centrado -->
+      <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.25);">
+        <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="36" cy="36" r="36" fill="rgba(255,255,255,0.15)"/>
+          <circle cx="36" cy="36" r="28" fill="#ff0000"/>
+          <polygon points="30,24 30,48 52,36" fill="white"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- iframe: oculto hasta hacer click -->
+    <div id="video-frame" style="display:none; position: relative; aspect-ratio: 16/9;">
+      <iframe id="yt-iframe"
+              style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
+              src=""
+              title="AgentIA Inteligencia Artificial para Aduanas y Comercio Exterior"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowfullscreen>
       </iframe>
+    </div>
   </div>
+
+  <script>
+    function activarVideo() {
+      document.getElementById('video-poster').style.display = 'none';
+      document.getElementById('video-frame').style.display = 'block';
+      document.getElementById('yt-iframe').src =
+        'https://www.youtube.com/embed/GoAKeynBjNs?autoplay=1&rel=0&modestbranding=1';
+    }
+  </script>
 
   <!-- Botón de Llamado a la Acción -->
   <div style="text-align: center; margin-top: 30px;">
