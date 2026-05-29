@@ -535,6 +535,15 @@ async def delete_document(doc_id: str):
         if doc_info and doc_info.get("filename"):
             _try_delete_file(doc_info["filename"], doc_id)
 
+        # Vaciar caché semántica: las respuestas cacheadas pueden referenciar
+        # el documento eliminado y quedarían obsoletas
+        try:
+            from backend.indexer.vectorstore import COLLECTION_CACHE
+            vector_store.clear_collection(COLLECTION_CACHE)
+            logger.info(f"Caché semántica vaciada tras eliminar documento {doc_id}")
+        except Exception as e:
+            logger.warning(f"No se pudo vaciar caché tras eliminar documento: {e}")
+
         logger.info(f"Documento eliminado: {doc_id}")
         return {"message": f"Documento eliminado exitosamente", "doc_id": doc_id}
 
