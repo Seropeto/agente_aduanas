@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Umbral global: activa OCR si el documento completo tiene menos de 100 chars
 OCR_THRESHOLD = 100
-# Umbral por página: activa OCR para esa página si extrae menos de 50 chars
-# Captura páginas con firmas/sellos que bloquean la extracción de pdfplumber
-OCR_PAGE_THRESHOLD = 50
+# Umbral por página: activa OCR para esa página si extrae menos de 200 chars.
+# 200 chars cubre el caso donde pdfplumber extrae el texto de formulario pre-impreso
+# (cabecera, fecha, firma) pero la conclusión real está bajo un sello/timbre escaneado.
+OCR_PAGE_THRESHOLD = 200
 CHUNK_SIZE = 500   # palabras
 CHUNK_OVERLAP = 50  # palabras
 
@@ -202,12 +203,18 @@ class DocumentProcessor:
             import pdfplumber
             pages_text = []
             with pdfplumber.open(str(file_path)) as pdf:
+                total_pages = len(pdf.pages)
                 for page_num, page in enumerate(pdf.pages):
                     page_text = page.extract_text() or ""
-                    if len(page_text.strip()) < OCR_PAGE_THRESHOLD:
+                    is_last_page = (page_num == total_pages - 1)
+                    # Activar OCR si: texto < umbral O es la última página del documento.
+                    # La última página siempre se re-verifica con OCR porque es donde
+                    # aparecen conclusiones, declaraciones y sellos en documentos legales.
+                    needs_ocr = len(page_text.strip()) < OCR_PAGE_THRESHOLD or is_last_page
+                    if needs_ocr:
+                        reason = "última página" if is_last_page and len(page_text.strip()) >= OCR_PAGE_THRESHOLD else f"{len(page_text.strip())} chars"
                         logger.info(
-                            f"Página {page_num + 1}: {len(page_text.strip())} chars, "
-                            f"activando OCR individual"
+                            f"Página {page_num + 1}: activando OCR ({reason})"
                         )
                         try:
                             import pytesseract

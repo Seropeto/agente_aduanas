@@ -88,10 +88,10 @@ def test_guardrail() -> bool:
                  "PROHIBIDO" in SYSTEM_PROMPT)
     ok3 = check("'el dictamen' en INTERNAL_DOC_SIGNALS",
                  "el dictamen" in INTERNAL_DOC_SIGNALS)
-    ok4 = check("'estrictamente en el' en INTERNAL_DOC_SIGNALS",
-                 "estrictamente en el" in INTERNAL_DOC_SIGNALS)
-    ok5 = check(f"OCR_PAGE_THRESHOLD == 50 (actual: {OCR_PAGE_THRESHOLD})",
-                 OCR_PAGE_THRESHOLD == 50)
+    ok4 = check("'normativo cargado' en INTERNAL_DOC_SIGNALS",
+                 "normativo cargado" in INTERNAL_DOC_SIGNALS)
+    ok5 = check(f"OCR_PAGE_THRESHOLD == 200 (actual: {OCR_PAGE_THRESHOLD})",
+                 OCR_PAGE_THRESHOLD == 200)
 
     return all([ok1, ok2, ok3, ok4, ok5])
 
