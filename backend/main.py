@@ -641,6 +641,22 @@ async def get_scraper_logs():
 
 
 # ------------------------------------------------------------------ #
+# Rutas: Caché semántica                                               #
+# ------------------------------------------------------------------ #
+@app.post("/api/admin/cache/clear")
+async def clear_semantic_cache(current_user: dict = Depends(get_current_user)):
+    """Vacía la caché semántica de respuestas. Útil tras re-indexar documentos."""
+    from backend.indexer.vectorstore import COLLECTION_CACHE
+    try:
+        vector_store.clear_collection(COLLECTION_CACHE)
+        logger.info(f"Caché semántica vaciada por {current_user.get('email')}")
+        return {"message": "Caché semántica vaciada correctamente.", "status": "ok"}
+    except Exception as e:
+        logger.error(f"Error vaciando caché: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al vaciar la caché: {e}")
+
+
+# ------------------------------------------------------------------ #
 # Rutas: Logs de consultas                                             #
 # ------------------------------------------------------------------ #
 @app.get("/api/admin/queries")
