@@ -268,6 +268,8 @@ const state = {
   scraperPollingInterval: null,
   sidebarOpen: true,
   sessionId: getOrCreateSessionId(),
+  activeDocumentId: null,
+  activeDocumentName: null,
 };
 
 const FILTER_LABELS = {
@@ -412,7 +414,12 @@ async function sendMessage() {
     const response = await apiFetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, filter: state.currentFilter, session_id: state.sessionId }),
+      body: JSON.stringify({
+        query,
+        filter: state.currentFilter,
+        session_id: state.sessionId,
+        ...(state.activeDocumentId && { document_id: state.activeDocumentId }),
+      }),
     });
 
     if (!response.ok) {
@@ -816,6 +823,26 @@ function closeExplorer() {
   document.getElementById('explorerModal').style.display = 'none';
 }
 
+function setActiveDocument(docId, docName) {
+  state.activeDocumentId = docId;
+  state.activeDocumentName = docName;
+  const indicator = document.getElementById('docAnchorIndicator');
+  const nameEl = document.getElementById('docAnchorName');
+  if (indicator && nameEl) {
+    nameEl.textContent = truncate(docName, 40);
+    indicator.style.display = 'flex';
+  }
+  closeExplorer();
+  showToast(`Anclado: ${truncate(docName, 35)}`, 'success');
+}
+
+function clearActiveDocument() {
+  state.activeDocumentId = null;
+  state.activeDocumentName = null;
+  const indicator = document.getElementById('docAnchorIndicator');
+  if (indicator) indicator.style.display = 'none';
+}
+
 function filterExplorer(value) {
   _explorerSearch = (value || '').trim().toLowerCase();
   renderExplorerBody();
@@ -878,12 +905,13 @@ function renderExplorerBody() {
       const thumb = isImage
         ? `<div class="explorer-card-thumb"><img src="${url}" alt="" onerror="imgThumbError(this)"/></div>`
         : `<div class="explorer-card-icon">${TYPE_ICONS[ct] || TYPE_ICONS.pdf}</div>`;
-      return `<div class="explorer-file-card" onclick="${clickAction}">
+      return `<div class="explorer-file-card" id="doc-${escapeAttr(doc.doc_id)}" onclick="${clickAction}">
         ${thumb}
         <div class="explorer-file-info">
           <span class="explorer-file-name" title="${escapeAttr(doc.title || doc.filename)}">${escapeHtml(truncate(doc.title || doc.filename, 28))}</span>
           <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} fragmentos${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
         </div>
+        <button class="explorer-anchor-btn" onclick="event.stopPropagation();setActiveDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Anclar: preguntar solo a este documento">📌 Anclar</button>
         <button class="explorer-delete-btn" onclick="event.stopPropagation();deleteDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Eliminar">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
         </button>
@@ -892,12 +920,13 @@ function renderExplorerBody() {
       const icon = isImage
         ? `<div class="explorer-list-thumb"><img src="${url}" alt="" onerror="imgThumbError(this)"/></div>`
         : `<div class="explorer-list-icon">${TYPE_ICONS[ct] || TYPE_ICONS.pdf}</div>`;
-      return `<div class="explorer-list-row" onclick="${clickAction}">
+      return `<div class="explorer-list-row" id="doc-${escapeAttr(doc.doc_id)}" onclick="${clickAction}">
         ${icon}
         <div class="explorer-list-info">
           <span class="explorer-file-name" title="${escapeAttr(doc.title || doc.filename)}">${escapeHtml(truncate(doc.title || doc.filename, 40))}</span>
           <span class="explorer-file-meta">${escapeHtml(doc.content_type || 'doc')} · ${doc.total_chunks} fragmentos${doc.date ? ' · ' + escapeHtml(doc.date) : ''}</span>
         </div>
+        <button class="explorer-anchor-btn" onclick="event.stopPropagation();setActiveDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Anclar: preguntar solo a este documento">📌 Anclar</button>
         <button class="explorer-delete-btn" onclick="event.stopPropagation();deleteDocument('${escapeAttr(doc.doc_id)}','${escapeAttr(doc.title || doc.filename)}')" title="Eliminar">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
         </button>

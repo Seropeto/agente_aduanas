@@ -161,6 +161,11 @@ class ChatRequest(BaseModel):
         max_length=64,
         description="ID de sesión para agrupar la memoria conversacional",
     )
+    document_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="ID del documento activo — restringe la búsqueda RAG exclusivamente a ese archivo",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -229,6 +234,7 @@ async def chat(body: ChatRequest, request: Request, x_client_id: Optional[str] =
             filter_collection=body.filter,
             user_id=current_user["id"],
             session_id=body.session_id,
+            document_id=body.document_id,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -295,6 +301,7 @@ async def chat_stream(
                 filter_collection=body.filter,
                 user_id=current_user["id"],
                 session_id=body.session_id,
+                document_id=body.document_id,
             ):
                 yield event
                 # Capturar metadatos del evento "done" para el log

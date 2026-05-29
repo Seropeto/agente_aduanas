@@ -486,6 +486,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
         filter_collection: str = "all",
         user_id: str | None = None,
         session_id: str | None = None,
+        document_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Procesa una consulta RAG: recupera contexto y genera respuesta con Claude.
@@ -544,8 +545,9 @@ Responde como experto en normativa aduanera chilena. Reglas:
         async def _cache():
             if filter_collection != "all":
                 return None
-            # Si la consulta puede apuntar a un doc interno, no usar caché
-            # (el caché no es por usuario y podría servir respuestas de otro usuario)
+            # Nunca cachear respuestas ancladas a un documento específico
+            if document_id:
+                return None
             if self._extract_title_fragment(query):
                 return None
             try:
@@ -566,12 +568,13 @@ Responde como experto en normativa aduanera chilena. Reglas:
         cached, history, (top_results, context_text, sources) = await asyncio.gather(
             _cache(),
             _history(),
-            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id),
+            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id, document_id),
         )
 
         # Detectar si hay documentos internos recuperados por coincidencia de título
         # (distance=0.0 es la marca que usa get_chunks_by_title_fragment)
-        has_internal_results = any(
+        # También aplica cuando hay document_id activo (todos sus chunks son relevantes)
+        has_internal_results = bool(document_id) or any(
             r.get("distance", 1.0) == 0.0 and r.get("collection") == COLLECTION_INTERNOS
             for r in top_results
         )
@@ -691,17 +694,37 @@ Responde como experto en normativa aduanera chilena. Reglas:
         query_type: str,
         filter_collection: str,
         user_id: str | None,
+        document_id: str | None = None,
     ) -> tuple[list[dict], str, list[dict]]:
         """
         Recupera documentos del vector store, filtra y construye contexto.
         Retorna (top_results, context_text, sources).
 
         Búsqueda híbrida:
-        1. Siempre intenta búsqueda por título en internos si el filtro lo permite.
-        2. Si la consulta tiene señales explícitas de documento interno, fuerza
+        1. Si hay document_id activo: búsqueda estrictamente en ese documento (early-return).
+        2. Siempre intenta búsqueda por título en internos si el filtro lo permite.
+        3. Si la consulta tiene señales explícitas de documento interno, fuerza
            la búsqueda semántica a INTERNOS únicamente.
-        3. Los resultados por título se anteponen con relevancia máxima.
+        4. Los resultados por título se anteponen con relevancia máxima.
         """
+        # Paso 0: document_id activo → búsqueda aislada exclusivamente en ese documento
+        if document_id:
+            try:
+                results = self.vector_store.search(
+                    query=query,
+                    collection_name=COLLECTION_INTERNOS,
+                    top_k=TOP_K_INTERNOS,
+                    filter_metadata={"doc_id": document_id},
+                )
+                logger.info(
+                    f"Búsqueda anclada a doc '{document_id}': {len(results)} chunks"
+                )
+                context_text, sources = self._build_context(results)
+                return results, context_text, sources
+            except Exception as e:
+                logger.error(f"Error en búsqueda por document_id '{document_id}': {e}")
+                # fallback a búsqueda normal si el filtro falla
+
         # Paso 1: búsqueda por título en internos (aditiva, no excluye normativa)
         title_results = []
         if filter_collection in ("all", "internos"):
@@ -814,6 +837,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
         filter_collection: str = "all",
         user_id: str | None = None,
         session_id: str | None = None,
+        document_id: str | None = None,
     ):
         """
         Versión streaming de query(). Genera eventos SSE:
@@ -868,7 +892,9 @@ Responde como experto en normativa aduanera chilena. Reglas:
         async def _cache():
             if filter_collection != "all":
                 return None
-            # Bypass caché si la consulta puede apuntar a un doc interno
+            # Nunca cachear respuestas ancladas a un documento específico
+            if document_id:
+                return None
             if self._extract_title_fragment(query):
                 return None
             try:
@@ -889,11 +915,12 @@ Responde como experto en normativa aduanera chilena. Reglas:
         cached, history, (top_results, context_text, sources) = await asyncio.gather(
             _cache(),
             _history(),
-            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id),
+            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id, document_id),
         )
 
         # Detectar documentos internos recuperados por título (distance=0.0)
-        has_internal_results = any(
+        # También aplica cuando hay document_id activo
+        has_internal_results = bool(document_id) or any(
             r.get("distance", 1.0) == 0.0 and r.get("collection") == COLLECTION_INTERNOS
             for r in top_results
         )
