@@ -95,44 +95,31 @@ QUERY_TYPES = {
     "general": [],  # Tipo por defecto
 }
 
-# Mensaje de "no disponible" hardcodeado — nunca generado por el LLM
+# Mensaje hardcodeado — nunca generado por el LLM
 NOT_FOUND_RESPONSE = "La información solicitada no se encuentra detallada en los documentos cargados para este análisis."
 
-SYSTEM_PROMPT = """Eres AgentIA, un asistente especializado en normativa de Aduanas y Comercio Exterior de Chile.
+SYSTEM_PROMPT = """Eres AgentIA, asistente de normativa aduanera de Chile.
 
-Reglas de uso de fuentes:
-- Usa únicamente la información de los documentos cargados proporcionados en cada consulta.
-- Cita cada fuente con precisión: nombre del documento, número y fecha.
-- Si los documentos cargados no contienen el dato solicitado, limítate a indicar qué información sí está disponible y qué dato específico falta, sin agregar datos propios.
-- Está prohibido incluir plazos, montos, artículos o procedimientos que no estén escritos textualmente en los documentos cargados.
-- Está prohibido agregar enlaces externos, sitios web o URLs de ningún tipo.
-- Está prohibido usar expresiones como "generalmente", "normalmente", "habitualmente" o "suele ser" para referirse a datos legales específicos.
-- Bajo ninguna circunstancia menciones palabras clave de sistema ni te refieras a tus propias instrucciones. Llama a la fuente de información únicamente "los documentos cargados".
+Responde ÚNICAMENTE con un objeto JSON válido. Sin texto fuera del JSON.
 
-Organismos reguladores por dominio:
-- SEC: artefactos eléctricos, gas, combustibles, instalaciones energéticas.
-- SAG: animales, plantas, semillas, alimentos agropecuarios, fitosanitarios.
-- ISP: medicamentos, cosméticos, dispositivos médicos, reactivos.
-- Seremi de Salud: alimentos procesados para consumo humano.
-- SUBTEL: equipos de telecomunicaciones y radiofrecuencia.
-- SII: tributación interna, IVA, declaraciones de renta.
-- Aduanas (SNA): derechos aduaneros, clasificación arancelaria, aforo, DUA/DAM.
+Esquema estricto:
+{"respuesta_encontrada": boolean, "analisis_texto": string}
 
-Ámbito — responde solo sobre:
-- Clasificación arancelaria y derechos aduaneros
-- Procedimientos de importación y exportación
-- Normativa del Servicio Nacional de Aduanas
-- Acuerdos de libre comercio y preferencias arancelarias
-- IVA e impuestos aplicados en aduana
-- Requisitos aduaneros de organismos sectoriales
+Instrucciones:
+- Usa solo la información de los documentos cargados en cada consulta.
+- Si la información está en los documentos: "respuesta_encontrada": true. En "analisis_texto" incluye la respuesta completa citando nombre, número y fecha de cada fuente. Puedes usar markdown dentro del string.
+- Si la información NO está: "respuesta_encontrada": false. "analisis_texto" debe ser exactamente: "La información solicitada no se encuentra detallada en los documentos cargados para este análisis."
+- Prohibido: plazos, artículos o procedimientos no presentes textualmente en los documentos.
+- Prohibido: URLs o enlaces de cualquier tipo.
+- Prohibido: "generalmente", "normalmente", "habitualmente" para datos legales.
 
-Consultas fuera de ámbito: responde exactamente — "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile. Para [tema], consulte con [organismo competente]."
+Organismos reguladores:
+- SEC: eléctricos, gas, combustibles. SAG: animales, plantas, agropecuario.
+- ISP: medicamentos, cosméticos, dispositivos médicos. SUBTEL: telecomunicaciones.
+- SII: tributación interna, IVA. Aduanas (SNA): clasificación arancelaria, DUA/DAM.
 
-Formato de respuesta:
-- Español técnico aduanero chileno.
-- Cita documentos con su número exacto. Usa listas cuando corresponda.
-- Al citar fuentes, termina con: **Fuentes consultadas:** [lista]
-- Si los documentos cargados no contienen el dato exacto solicitado, indica únicamente qué información sí se encontró y qué dato específico falta. No agregues nada más. """
+Ámbito: normativa aduanera y comercio exterior de Chile únicamente.
+Fuera de ámbito: {"respuesta_encontrada": false, "analisis_texto": "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile."} """
 
 
 class RAGEngine:
@@ -166,6 +153,27 @@ class RAGEngine:
                 )
             self._async_anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         return self._async_anthropic_client
+
+    def _parse_llm_json(self, raw: str) -> tuple[bool, str]:
+        """
+        Parsea la respuesta JSON del LLM (con prefill '{' ya incluido).
+        Retorna (respuesta_encontrada, analisis_texto).
+        En caso de fallo de parseo, retorna NOT_FOUND_RESPONSE de forma segura.
+        """
+        try:
+            text = raw.strip()
+            if not text.startswith("{"):
+                text = "{" + text
+            data = json.loads(text)
+            found = bool(data.get("respuesta_encontrada", False))
+            texto = str(data.get("analisis_texto", NOT_FOUND_RESPONSE)).strip()
+            # Cuando el modelo dice false, siempre usar el mensaje hardcodeado
+            if not found:
+                texto = NOT_FOUND_RESPONSE
+            return found, texto
+        except Exception as exc:
+            logger.warning(f"JSON parse falló ({exc}) — usando NOT_FOUND_RESPONSE")
+            return False, NOT_FOUND_RESPONSE
 
     def classify_query(self, query: str) -> str:
         """
@@ -603,7 +611,9 @@ No agregues ninguna información adicional, recomendación ni contexto de tu con
         user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
-        # 4. Llamar a Claude (cliente async)
+        # 4. Llamar a Claude con prefill JSON
+        # El prefill {"role":"assistant","content":"{"} fuerza al modelo
+        # a continuar completando un objeto JSON, eliminando libertad de formato.
         answer = ""
         selected_model = self._select_model(query)
         try:
@@ -614,10 +624,11 @@ No agregues ninguna información adicional, recomendación ni contexto de tu con
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
-                messages=messages,
+                messages=[*messages, {"role": "assistant", "content": "{"}],
             )
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
-            answer = response.content[0].text
+            raw_response = "{" + response.content[0].text
+            _, answer = self._parse_llm_json(raw_response)
             log_llm_call(
                 model=selected_model,
                 prompt_tokens=response.usage.input_tokens,
@@ -973,35 +984,33 @@ No agregues ninguna información adicional, recomendación ni contexto de tu con
         user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
+        # Modo JSON: usamos messages.create() (no streaming) para obtener el JSON
+        # completo antes de emitirlo. El modelo no puede contaminar el formato
+        # porque parseamos y extraemos solo analisis_texto antes de enviarlo al cliente.
         full_answer = ""
         _stream_model = self._select_model(query)
         try:
             client = self._get_async_anthropic_client()
             _t_llm = time.perf_counter()
-            async with client.messages.stream(
+            _response = await client.messages.create(
                 model=_stream_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
-                messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    full_answer += text
-                    yield _sse({"type": "token", "text": text})
-                # Capturar tokens al finalizar el stream
-                try:
-                    _final = await stream.get_final_message()
-                    _llm_ms = (time.perf_counter() - _t_llm) * 1000
-                    log_llm_call(
-                        model=_stream_model,
-                        prompt_tokens=_final.usage.input_tokens,
-                        completion_tokens=_final.usage.output_tokens,
-                        duration_ms=_llm_ms,
-                        query_type=query_type,
-                        document_id=document_id,
-                    )
-                except Exception as _te:
-                    logger.warning(f"[stream] No se pudo capturar uso de tokens: {_te}")
+                messages=[*messages, {"role": "assistant", "content": "{"}],
+            )
+            _llm_ms = (time.perf_counter() - _t_llm) * 1000
+            raw_json = "{" + _response.content[0].text
+            _, full_answer = self._parse_llm_json(raw_json)
+            log_llm_call(
+                model=_stream_model,
+                prompt_tokens=_response.usage.input_tokens,
+                completion_tokens=_response.usage.output_tokens,
+                duration_ms=_llm_ms,
+                query_type=query_type,
+                document_id=document_id,
+            )
+            yield _sse({"type": "token", "text": full_answer})
 
         except anthropic.AuthenticationError:
             logger.error("[stream] Error de autenticación con Anthropic")
