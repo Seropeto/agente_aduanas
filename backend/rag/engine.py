@@ -44,7 +44,29 @@ COMPLEX_KEYWORDS = [
 # relevantes para la pregunta. Esto evita que contratos o documentos operativos
 # aparezcan en consultas de normativa general.
 INTERNAL_MAX_DISTANCE = 0.40   # ≥ 60 % de similitud semántica requerida
-NORMATIVA_MAX_DISTANCE = 0.50  # ≥ 50 % de similitud — balance entre relevancia y cobertura
+NORMATIVA_MAX_DISTANCE = 0.45  # ≥ 55 % de similitud — más estricto para evitar que
+                               # publicaciones poco relevantes (p.ej. Diarios Oficiales)
+                               # pasen el filtro solo por cercanía semántica débil
+
+# --- Búsqueda híbrida (denso + keyword) ---
+# ChromaDB no expone BM25 nativo, por lo que el componente léxico se implementa como
+# un re-ranking en Python: la distancia semántica efectiva se reduce según el
+# solapamiento de palabras clave significativas entre la consulta y el fragmento.
+# distancia_efectiva = distancia_semantica - HYBRID_KEYWORD_WEIGHT * ratio_solapamiento
+HYBRID_KEYWORD_WEIGHT = 0.20
+
+# Stopwords en español para aislar términos significativos en el componente léxico.
+SPANISH_STOPWORDS = frozenset({
+    "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al",
+    "a", "ante", "con", "contra", "desde", "en", "entre", "hacia", "hasta",
+    "para", "por", "según", "segun", "sin", "sobre", "tras", "y", "e", "o", "u",
+    "que", "qué", "cual", "cuál", "como", "cómo", "cuando", "cuándo", "donde",
+    "dónde", "quien", "quién", "se", "su", "sus", "lo", "le", "les", "me", "mi",
+    "te", "tu", "es", "son", "ser", "está", "esta", "este", "estos", "estas",
+    "hay", "tiene", "tienen", "más", "mas", "muy", "ya", "no", "si", "sí",
+    "cuanto", "cuánto", "cuantos", "cuántos", "existe", "existen", "favor",
+    "puede", "pueden", "debe", "deben", "sobre",
+})
 
 # Señales que indican que el usuario busca un documento interno específico
 INTERNAL_DOC_SIGNALS = [
@@ -66,6 +88,17 @@ INTERNAL_DOC_SIGNALS = [
 # Más alto que TOP_K_RESULTS para cubrir documentos legales extensos (dictámenes,
 # resoluciones) donde la conclusión puede estar en la última página/chunk.
 TOP_K_INTERNOS = 8
+
+# Modo "Todas las fuentes": candidatos a recuperar por colección antes de fusionar.
+# Se busca generosamente en ambas colecciones para que la fusión balanceada tenga
+# material suficiente y los Documentos Internos no queden fuera por falta de candidatos.
+TOP_K_MIXED = 5
+
+# Modo "Todas las fuentes": tamaño del contexto fusionado y cupos reservados.
+# Se reservan espacios para internos de modo que la normativa (con distancias
+# típicamente menores) no desplace por completo a los documentos del usuario.
+MIXED_CONTEXT_CAP = 8       # total de chunks enviados al LLM en modo mixto
+MIXED_RESERVE_INTERNOS = 3  # cupos garantizados para internos (si existen y pasan filtro)
 
 from backend.indexer.vectorstore import (
     VectorStore,
@@ -105,10 +138,16 @@ Responde ÚNICAMENTE con un objeto JSON válido. Sin texto fuera del JSON.
 Esquema estricto:
 {"respuesta_encontrada": boolean, "analisis_texto": string}
 
+El contexto puede llegar en dos bloques etiquetados:
+- <NORMATIVA_OFICIAL_RECUPERADA>: normativa oficial recuperada de la base de datos del sistema (leyes, decretos, circulares, resoluciones, tratados, acuerdos comerciales). Es información autoritativa del servidor.
+- <DOCUMENTOS_INTERNOS_CARGADOS>: archivos que el propio usuario subió al sistema.
+
 Instrucciones:
-- Usa solo la información de los documentos cargados en cada consulta.
-- Si la información está en los documentos: "respuesta_encontrada": true. En "analisis_texto" incluye la respuesta completa citando nombre, número y fecha de cada fuente. Puedes usar markdown dentro del string.
-- Si la información NO está: "respuesta_encontrada": false. "analisis_texto" debe ser exactamente: "La información solicitada no se encuentra detallada en los documentos cargados para este análisis."
+- Usa solo la información contenida en los bloques de contexto de esta consulta. Ambos bloques son fuentes válidas; si la respuesta está en CUALQUIERA de los dos, "respuesta_encontrada": true.
+- Si la información está: "respuesta_encontrada": true. En "analisis_texto" incluye la respuesta completa citando nombre, número y fecha de cada fuente. Puedes usar markdown dentro del string.
+- Si la información NO está en ninguno de los bloques: "respuesta_encontrada": false. "analisis_texto" debe ser exactamente: "La información solicitada no se encuentra detallada en los documentos cargados para este análisis."
+- Nunca declares "no disponible" si el dato aparece textualmente en <NORMATIVA_OFICIAL_RECUPERADA> o <DOCUMENTOS_INTERNOS_CARGADOS>.
+- No menciones las etiquetas de los bloques en tu respuesta; son metadatos internos.
 - Prohibido: plazos, artículos o procedimientos no presentes textualmente en los documentos.
 - Prohibido: URLs o enlaces de cualquier tipo.
 - Prohibido: "generalmente", "normalmente", "habitualmente" para datos legales.
@@ -118,8 +157,10 @@ Organismos reguladores:
 - ISP: medicamentos, cosméticos, dispositivos médicos. SUBTEL: telecomunicaciones.
 - SII: tributación interna, IVA. Aduanas (SNA): clasificación arancelaria, DUA/DAM.
 
-Ámbito: normativa aduanera y comercio exterior de Chile únicamente.
-Fuera de ámbito: {"respuesta_encontrada": false, "analisis_texto": "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile."} """
+Ámbito y excepción de documentos internos:
+- La restricción de ámbito aplica SOLO a consultas que dependen de tu conocimiento general o de <NORMATIVA_OFICIAL_RECUPERADA>: en ese caso el tema debe ser normativa aduanera y comercio exterior de Chile.
+- EXCEPCIÓN OBLIGATORIA: si hay contenido en <DOCUMENTOS_INTERNOS_CARGADOS>, SIEMPRE debes analizarlo y responder sobre él, AUNQUE su contenido no trate de aduanas (contratos, declaraciones, facturas, certificados, etc.). Los documentos internos los subió el usuario y nunca se consideran "fuera de ámbito".
+- Solo responde el mensaje de "fuera de alcance" cuando NO haya ningún documento interno relevante Y la consulta tampoco sea de normativa aduanera/comercio exterior. En ese caso: {"respuesta_encontrada": false, "analisis_texto": "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile."} """
 
 
 class RAGEngine:
@@ -221,6 +262,83 @@ class RAGEngine:
         q = query.lower()
         return any(signal in q for signal in INTERNAL_DOC_SIGNALS)
 
+    def _significant_tokens(self, text: str) -> list[str]:
+        """
+        Tokeniza el texto y descarta stopwords y tokens cortos.
+        Normaliza a minúsculas; conserva números (códigos arancelarios, leyes).
+        """
+        tokens = re.findall(r"[a-záéíóúüñ0-9]+", text.lower())
+        return [t for t in tokens if len(t) >= 3 and t not in SPANISH_STOPWORDS]
+
+    def _keyword_overlap_ratio(self, query_tokens: list[str], text: str) -> float:
+        """
+        Proporción de palabras clave de la consulta que aparecen en el fragmento.
+        Devuelve un valor en [0.0, 1.0]. Es el componente léxico de la búsqueda híbrida.
+        """
+        if not query_tokens:
+            return 0.0
+        text_tokens = set(self._significant_tokens(text))
+        if not text_tokens:
+            return 0.0
+        matches = sum(1 for tok in set(query_tokens) if tok in text_tokens)
+        return matches / len(set(query_tokens))
+
+    def _apply_hybrid_reranking(
+        self, query: str, results: list[dict[str, Any]]
+    ) -> None:
+        """
+        Re-rankea los resultados in-place combinando distancia semántica con
+        solapamiento léxico (keyword overlap). Escribe en cada resultado:
+          - 'keyword_overlap': ratio léxico [0, 1]
+          - 'hybrid_distance': distancia efectiva usada para ordenar (menor = mejor)
+
+        Los fragmentos recuperados por título (distance == 0.0) se mantienen en la
+        cima porque su distancia efectiva nunca puede superarse.
+        """
+        query_tokens = self._significant_tokens(query)
+        for r in results:
+            distance = r.get("distance", 1.0)
+            overlap = self._keyword_overlap_ratio(query_tokens, r.get("text", ""))
+            r["keyword_overlap"] = round(overlap, 3)
+            r["hybrid_distance"] = max(0.0, distance - HYBRID_KEYWORD_WEIGHT * overlap)
+
+    @staticmethod
+    def _rank_key(r: dict[str, Any]) -> float:
+        """Clave de ordenamiento: distancia híbrida (menor = más relevante)."""
+        return r.get("hybrid_distance", r.get("distance", 1.0))
+
+    def _merge_balanced(
+        self,
+        normativa: list[dict[str, Any]],
+        internos: list[dict[str, Any]],
+        cap_total: int,
+        reserve_internos: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Fusiona resultados de NORMATIVA e INTERNOS garantizando representación de
+        ambas colecciones en modo "Todas las fuentes".
+
+        - Reserva hasta `reserve_internos` cupos para los mejores internos disponibles.
+        - Llena el resto con los mejores globales por distancia híbrida.
+        - Re-ordena el conjunto final por relevancia.
+
+        Si una colección viene vacía (p.ej. ningún interno superó el filtro de
+        distancia), la reserva no aplica y el contexto se llena solo con la otra.
+        Ambas listas deben venir ya ordenadas por relevancia.
+        """
+        reserved = internos[:reserve_internos]
+        remaining = max(0, cap_total - len(reserved))
+
+        # Pool para los cupos restantes: normativa + internos no reservados
+        reserved_texts = {r.get("text") for r in reserved}
+        pool = [r for r in (normativa + internos) if r.get("text") not in reserved_texts]
+        pool.sort(key=self._rank_key)
+        fill = pool[:remaining]
+
+        merged = reserved + fill
+        merged.sort(key=self._rank_key)
+        return merged
+
     def _extract_title_fragment(self, query: str) -> str:
         """
         Extrae el posible nombre de documento de la consulta.
@@ -269,26 +387,28 @@ class RAGEngine:
             # Usar top_k mayor para cubrir documentos legales extensos (dictámenes, etc.)
             return [(COLLECTION_INTERNOS, TOP_K_INTERNOS)]
 
-        # Prioridad según tipo de consulta
-        if query_type in ("arancelaria", "normativa"):
+        # Modo "Todas las fuentes": SIEMPRE se busca en ambas colecciones con un
+        # top_k generoso (TOP_K_MIXED). El orden refleja la prioridad por tipo de
+        # consulta, pero ambas colecciones aportan candidatos para la fusión posterior.
+        if query_type == "tramite":
             return [
-                (COLLECTION_NORMATIVA, TOP_K_RESULTS),
-                (COLLECTION_INTERNOS, TOP_K_RESULTS),
-            ]
-        elif query_type == "tramite":
-            return [
-                (COLLECTION_INTERNOS, TOP_K_RESULTS),
-                (COLLECTION_NORMATIVA, TOP_K_RESULTS),
+                (COLLECTION_INTERNOS, TOP_K_MIXED),
+                (COLLECTION_NORMATIVA, TOP_K_MIXED),
             ]
         else:
             return [
-                (COLLECTION_NORMATIVA, TOP_K_RESULTS),
-                (COLLECTION_INTERNOS, TOP_K_RESULTS),
+                (COLLECTION_NORMATIVA, TOP_K_MIXED),
+                (COLLECTION_INTERNOS, TOP_K_MIXED),
             ]
 
     def _build_context(self, search_results: list[dict[str, Any]]) -> tuple[str, list[dict]]:
         """
         Construye el contexto textual y la lista de fuentes a partir de los resultados de búsqueda.
+
+        El contexto se segrega en dos bloques etiquetados para que el LLM distinga
+        el origen de cada fragmento:
+          <NORMATIVA_OFICIAL_RECUPERADA>  → normativa oficial (base de datos / scraping)
+          <DOCUMENTOS_INTERNOS_CARGADOS>  → archivos subidos por el usuario
 
         Returns:
             (context_text, sources_list)
@@ -296,11 +416,12 @@ class RAGEngine:
         if not search_results:
             return "", []
 
-        context_parts = []
+        normativa_parts: list[str] = []
+        internos_parts: list[str] = []
         sources = []
         seen_doc_ids = set()
 
-        for i, result in enumerate(search_results, 1):
+        for result in search_results:
             text = result.get("text", "")
             meta = result.get("metadata", {})
             collection = result.get("collection", "")
@@ -320,9 +441,13 @@ class RAGEngine:
             # Etiqueta de la fuente para el contexto
             source_label = self._format_source_label(title, source, content_type, date)
 
-            # Sección del contexto
-            context_part = f"[FUENTE {i}: {source_label}]\n{text}\n"
-            context_parts.append(context_part)
+            # Segregar el fragmento según su colección de origen
+            if collection == COLLECTION_INTERNOS:
+                idx = len(internos_parts) + 1
+                internos_parts.append(f"[DOC {idx}: {source_label}]\n{text}\n")
+            else:
+                idx = len(normativa_parts) + 1
+                normativa_parts.append(f"[FUENTE {idx}: {source_label}]\n{text}\n")
 
             # Agregar a fuentes únicas
             if doc_id not in seen_doc_ids:
@@ -338,7 +463,21 @@ class RAGEngine:
                 }
                 sources.append(source_entry)
 
-        context_text = "\n---\n".join(context_parts)
+        blocks = []
+        if normativa_parts:
+            blocks.append(
+                "<NORMATIVA_OFICIAL_RECUPERADA>\n"
+                + "\n---\n".join(normativa_parts)
+                + "\n</NORMATIVA_OFICIAL_RECUPERADA>"
+            )
+        if internos_parts:
+            blocks.append(
+                "<DOCUMENTOS_INTERNOS_CARGADOS>\n"
+                + "\n---\n".join(internos_parts)
+                + "\n</DOCUMENTOS_INTERNOS_CARGADOS>"
+            )
+
+        context_text = "\n\n".join(blocks)
         return context_text, sources
 
     def _format_source_label(
@@ -391,7 +530,7 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
         hint = type_hints.get(query_type, "")
 
         if context:
-            message = f"""[CONTEXTO] — Documentos oficiales recuperados de la base de datos:
+            message = f"""Documentos recuperados del sistema para esta consulta:
 
 {context}
 
@@ -400,19 +539,12 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
 {hint}
 Consulta del usuario: {query}
 
-Instrucciones:
-- Responde ÚNICAMENTE con información que esté explícita en el [CONTEXTO] anterior.
-- Cita cada fuente con precisión (nombre, número, fecha).
-- Si el [CONTEXTO] no contiene la respuesta completa, indica exactamente qué parte falta y aplica la REGLA DE ORO: no deduzcas ni completes con conocimiento propio."""
+Responde según el esquema JSON definido en las instrucciones del sistema. Usa únicamente la información contenida en los bloques anteriores y cita nombre, número y fecha de cada fuente."""
         else:
             message = f"""{hint}
 Consulta del usuario: {query}
 
-No hay documentos sobre este tema en la base de datos en este momento.
-
-Aplica la REGLA DE ORO: responde ÚNICAMENTE:
-"La información solicitada no se encuentra en los documentos disponibles en la base de datos. Para verificar, consulte directamente https://www.aduana.cl o https://www.diariooficial.interior.gob.cl"
-No agregues ninguna información adicional, recomendación ni contexto de tu conocimiento propio."""
+No hay documentos sobre este tema en el sistema en este momento. Responde con el esquema JSON indicando "respuesta_encontrada": false."""
 
         return message
 
@@ -857,11 +989,34 @@ No agregues ninguna información adicional, recomendación ni contexto de tu con
                         filtered.append(r)
             all_results = filtered
 
-        all_results.sort(key=lambda x: x.get("distance", 1.0))
-        # Usar cap mayor cuando se encontró un documento interno específico por título
-        # (puede tener hasta 10+ chunks en documentos legales extensos)
-        max_chunks = 10 if title_results else 6
-        top_results = all_results[:max_chunks]
+        # Búsqueda híbrida: re-rankear por distancia semántica + solapamiento léxico.
+        # Reemplaza cualquier ponderación por recencia: el orden depende solo de la
+        # relevancia (semántica + keyword), nunca de la fecha del documento.
+        self._apply_hybrid_reranking(query, all_results)
+        all_results.sort(key=self._rank_key)
+
+        if title_results:
+            # Documento interno específico hallado por título: cap mayor para cubrir
+            # documentos legales extensos (dictámenes con 10+ chunks).
+            top_results = all_results[:10]
+        elif effective_filter == "all":
+            # "Todas las fuentes": fusión balanceada para que AMBAS colecciones
+            # aporten contexto y se llenen ambas etiquetas antes de ir al LLM.
+            normativa_res = [r for r in all_results if r.get("collection") != COLLECTION_INTERNOS]
+            internos_res  = [r for r in all_results if r.get("collection") == COLLECTION_INTERNOS]
+            top_results = self._merge_balanced(
+                normativa_res, internos_res,
+                cap_total=MIXED_CONTEXT_CAP,
+                reserve_internos=MIXED_RESERVE_INTERNOS,
+            )
+            logger.info(
+                f"Fusión 'all': {len(normativa_res)} normativa + {len(internos_res)} internos "
+                f"→ {len(top_results)} chunks ({sum(1 for r in top_results if r.get('collection') == COLLECTION_INTERNOS)} internos en contexto)"
+            )
+        else:
+            # Filtro explícito ("normativa" o "internos"): una sola colección.
+            top_results = all_results[:6]
+
         context_text, sources = self._build_context(top_results)
         return top_results, context_text, sources
 

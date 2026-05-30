@@ -126,7 +126,7 @@ async def _run_all_scrapers() -> dict[str, Any]:
     scraper_log = _setup_scraper_logger()
 
     # Importaciones tardías para evitar ciclos
-    from backend.scrapers import AduanaScraper, BCNScraper, SIIScraper, DiarioOficialScraper
+    from backend.scrapers import AduanaScraper, BCNScraper, SIIScraper, DiarioOficialScraper, TLCScraper
     from backend.indexer.document_processor import DocumentProcessor
     from backend.indexer.vectorstore import VectorStore, COLLECTION_NORMATIVA
     from backend.normative_changelog import (
@@ -161,6 +161,7 @@ async def _run_all_scrapers() -> dict[str, Any]:
             ("Aduana.cl", AduanaScraper()),
             ("BCN.cl", BCNScraper()),
             ("Diario Oficial", DiarioOficialScraper()),
+            ("TLC/SUBREI", TLCScraper()),
             # ("SII.cl", SIIScraper()),  # Deshabilitado: URLs retornan 404
         ]
 
