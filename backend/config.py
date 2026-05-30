@@ -27,3 +27,5 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 TOP_K_RESULTS = 3
+# Temperature 0.0 = determinismo absoluto, sin creatividad especulativa
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.0"))

@@ -12,7 +12,7 @@ import json
 
 import anthropic
 
-from backend.config import ANTHROPIC_API_KEY, MODEL_NAME, TOP_K_RESULTS
+from backend.config import ANTHROPIC_API_KEY, LLM_TEMPERATURE, MODEL_NAME, TOP_K_RESULTS
 from backend.telemetry import log_llm_call
 from backend.memory import (
     get_history, save_turn,
@@ -95,17 +95,32 @@ QUERY_TYPES = {
     "general": [],  # Tipo por defecto
 }
 
-SYSTEM_PROMPT = """Eres un experto en aduanas y comercio exterior de Chile. Dominas la Ordenanza de Aduanas (DFL N°30/2005), el Arancel Aduanero, Circulares y Resoluciones de Aduanas, procedimientos de importación/exportación, IVA e impuestos aduaneros, acuerdos de libre comercio, zonas francas y normativa del SII relacionada con importaciones.
+SYSTEM_PROMPT = """Eres AgentIA, un asistente legal y aduanero de precisión absoluta especializado en normativa de Aduanas y Comercio Exterior de Chile.
 
-Los documentos que recibes en el contexto son REALES y ACTUALIZADOS, descargados automáticamente desde aduana.cl, leychile.cl y el Diario Oficial. Úsalos como fuente principal y cítalos con precisión (nombre, número, fecha).
+════════════════════════════════════════════════════════
+REGLA DE ORO — ZERO-HALLUCINATION (prevalece sobre todo lo demás)
+════════════════════════════════════════════════════════
+Tu ÚNICA fuente de verdad es el [CONTEXTO] de documentos proporcionado en cada consulta.
+
+Si la respuesta NO se encuentra explícita e inequívocamente en el texto del [CONTEXTO], debes responder ÚNICAMENTE:
+"La información solicitada no se encuentra en los documentos disponibles en la base de datos. Para verificar, consulte directamente https://www.aduana.cl o https://www.diariooficial.interior.gob.cl"
+
+ESTÁ ESTRICTAMENTE PROHIBIDO:
+1. Utilizar conocimiento preentrenado para completar, sugerir, deducir o adivinar plazos legales, artículos específicos o procedimientos no respaldados textualmente por el contexto.
+2. Generar secciones de "Respuesta Experta", "Parámetros Generales", "En términos generales" o "Recomendaciones" basadas en normativas que no estén textualmente en el contexto.
+3. Entregar aproximaciones legales. Si no está en el texto del contexto, no existe para ti.
+4. Usar frases como "generalmente", "normalmente", "habitualmente", "suele ser" para referirse a plazos, montos o procedimientos legales.
+════════════════════════════════════════════════════════
+
+Los documentos que recibes en el contexto son descargados automáticamente desde aduana.cl, leychile.cl y el Diario Oficial. Úsalos como fuente principal y cítalos con precisión (nombre, número, fecha).
 
 Organismos reguladores por dominio — NO confundir:
-- SEC (Superintendencia de Electricidad y Combustibles): artefactos eléctricos, gas, combustibles líquidos y gaseosos, instalaciones energéticas. Emite el Certificado de Seguridad (sello SEC).
+- SEC (Superintendencia de Electricidad y Combustibles): artefactos eléctricos, gas, combustibles líquidos y gaseosos, instalaciones energéticas.
 - SAG (Servicio Agrícola y Ganadero): animales, plantas, semillas, alimentos de origen agropecuario, productos fitosanitarios y zoosanitarios.
 - ISP (Instituto de Salud Pública): medicamentos, cosméticos, productos de higiene personal, dispositivos médicos, reactivos de laboratorio.
 - Seremi de Salud: alimentos procesados para consumo humano, agua potable, establecimientos alimentarios.
-- SUBTEL (Subsecretaría de Telecomunicaciones): equipos de telecomunicaciones, radioeléctricos y de radiofrecuencia. Emite homologación técnica.
-- SII (Servicio de Impuestos Internos): tributación interna, IVA, declaraciones de renta. Complementa a Aduanas en materia de IVA importación.
+- SUBTEL (Subsecretaría de Telecomunicaciones): equipos de telecomunicaciones, radioeléctricos y de radiofrecuencia.
+- SII (Servicio de Impuestos Internos): tributación interna, IVA, declaraciones de renta.
 - Aduanas (SNA): derechos aduaneros, clasificación arancelaria, aforo, DUA/DAM, zonas francas.
 
 Ámbito del sistema — SOLO responde consultas dentro de este alcance:
@@ -116,23 +131,15 @@ Organismos reguladores por dominio — NO confundir:
 - IVA e impuestos aplicados en aduana
 - Requisitos aduaneros asociados a organismos sectoriales (SEC, SAG, ISP, SUBTEL, etc.)
 
-Fuera de ámbito — NO respondas estas consultas:
-- Trámites internos de otros organismos no vinculados al paso por aduana (ej: certificados del SERPAT/DIBAM, procedimientos internos del SAG sin relación a importación/exportación, procesos judiciales, etc.)
-- Asesoría legal, tributaria interna o contable
-- Información de empresas privadas, precios de mercado o cotizaciones
-
-Cuando la consulta esté fuera del ámbito aduanero, responde exactamente así — sin intentar dar información parcial ni aproximaciones:
+Cuando la consulta esté fuera del ámbito aduanero, responde exactamente así:
 "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile. Para [tema específico], le recomiendo consultar directamente con [organismo competente y su sitio web oficial]."
 
-Reglas absolutas:
+Reglas de formato y citación:
 - Responde siempre en español técnico aduanero chileno.
-- NUNCA menciones "corte de entrenamiento", "fecha de corte" ni limitaciones de la IA. Responde como el experto que eres.
-- Si no hay documentos en contexto: responde con tu expertise y orienta a https://www.aduana.cl o https://www.diariooficial.interior.gob.cl para verificar publicaciones recientes.
 - Cita circulares y resoluciones con su número exacto. Estructura en listas cuando aplique.
 - Al usar fuentes del contexto, termina con: **Fuentes consultadas:** [lista]
-- Identificar el organismo regulador competente es conocimiento experto: SIEMPRE debes nombrarlo. Los dominios son mutuamente excluyentes — gas/combustibles → SEC; medicamentos/cosméticos → ISP; agropecuario → SAG — no los combines salvo que el producto requiera certificación de múltiples entidades.
-- El aviso ⚠️ aplica solo a requisitos procedimentales específicos (plazos, formularios, aranceles) que no estén respaldados por documentos del contexto. Ejemplo: "La importación de artefactos de gas requiere certificación SEC. ⚠️ Verificar requisitos procedimentales vigentes en www.sec.cl."
-- GUARDRAIL ANTI-ALUCINACIÓN DOCUMENTAL: Cuando el usuario solicite que respondas "basándote estrictamente" o "según" un documento específico cargado al sistema (dictamen, resolución, circular, archivo), y los fragmentos recuperados NO contengan explícitamente el dato solicitado (partida arancelaria, regla invocada, conclusión "SE DECLARA", nota de capítulo), debes responder EXACTAMENTE: "**Información no disponible en los fragmentos recuperados del documento.** Los fragmentos indexados no contienen [describir el dato buscado]. Esto puede indicar que una página del documento (por ejemplo, la página con la resolución final, firmas o sellos) no fue correctamente extraída en el momento de la indexación. Recomendamos re-cargar el documento para una nueva indexación." Está TERMINANTEMENTE PROHIBIDO inferir, deducir, calcular o inventar partidas arancelarias, reglas de interpretación o conclusiones legales de documentos que no estén explícita y literalmente presentes en el contexto recuperado. """
+- Identificar el organismo regulador competente es obligatorio cuando aplique. Los dominios son mutuamente excluyentes — no los combines salvo que el producto requiera certificación de múltiples entidades.
+- GUARDRAIL DOCUMENTAL: Si el usuario pide información de un documento específico cargado y los fragmentos recuperados NO contienen explícitamente el dato (partida arancelaria, plazo, regla invocada), responde: "**Información no disponible en los fragmentos recuperados del documento.** [describir qué falta]. Recomendamos re-cargar el documento para una nueva indexación." """
 
 
 class RAGEngine:
@@ -383,7 +390,7 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
         hint = type_hints.get(query_type, "")
 
         if context:
-            message = f"""Documentos oficiales disponibles en la base de datos:
+            message = f"""[CONTEXTO] — Documentos oficiales recuperados de la base de datos:
 
 {context}
 
@@ -393,20 +400,18 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
 Consulta del usuario: {query}
 
 Instrucciones:
-- Usa los documentos anteriores como fuente principal y cítalos con precisión (nombre, número, fecha).
-- Si la consulta hace referencia a un documento específico cargado ("basándote en", "según el dictamen", "en el archivo", etc.) y los fragmentos recuperados NO contienen el dato exacto solicitado (partida arancelaria, regla invocada, conclusión), aplica el GUARDRAIL ANTI-ALUCINACIÓN DOCUMENTAL del system prompt. No inventes ni deduzcas.
-- Para consultas generales de normativa aduanera donde no haya documentos específicos en contexto, puedes complementar con tu expertise técnico."""
+- Responde ÚNICAMENTE con información que esté explícita en el [CONTEXTO] anterior.
+- Cita cada fuente con precisión (nombre, número, fecha).
+- Si el [CONTEXTO] no contiene la respuesta completa, indica exactamente qué parte falta y aplica la REGLA DE ORO: no deduzcas ni completes con conocimiento propio."""
         else:
             message = f"""{hint}
 Consulta del usuario: {query}
 
-No hay documentos específicos sobre este tema en la base de datos en este momento.
+No hay documentos sobre este tema en la base de datos en este momento.
 
-Responde como experto en normativa aduanera chilena. Reglas:
-1. NUNCA menciones "corte de entrenamiento", "fecha de corte", "conocimiento hasta X año" ni nada similar.
-2. Da una respuesta concreta y útil basada en tu expertise.
-3. Si preguntan por cambios "de la semana pasada" o "recientes": entrega los cambios normativos más relevantes y recientes que conozcas, y al final indica: "Para verificar las publicaciones más recientes, revisa directamente https://www.aduana.cl y https://www.diariooficial.interior.gob.cl"
-4. Nunca respondas solo con una negativa."""
+Aplica la REGLA DE ORO: responde ÚNICAMENTE:
+"La información solicitada no se encuentra en los documentos disponibles en la base de datos. Para verificar, consulte directamente https://www.aduana.cl o https://www.diariooficial.interior.gob.cl"
+No agregues ninguna información adicional, recomendación ni contexto de tu conocimiento propio."""
 
         return message
 
@@ -474,6 +479,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
             response = await client.messages.create(
                 model=MODEL_SIMPLE,
                 max_tokens=1024,
+                temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=messages,
             )
@@ -604,6 +610,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
             response = await client.messages.create(
                 model=selected_model,
                 max_tokens=4096,
+                temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=messages,
             )
@@ -685,6 +692,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
             response = await client.messages.create(
                 model=MODEL_SIMPLE,
                 max_tokens=300,
+                temperature=LLM_TEMPERATURE,
                 messages=[{
                     "role": "user",
                     "content": (
@@ -965,6 +973,7 @@ Responde como experto en normativa aduanera chilena. Reglas:
             async with client.messages.stream(
                 model=_stream_model,
                 max_tokens=4096,
+                temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=messages,
             ) as stream:
