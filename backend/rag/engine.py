@@ -97,15 +97,17 @@ TOP_K_MIXED = 5
 # Modo "Todas las fuentes": tamaño del contexto fusionado y cupos reservados.
 # Se reservan espacios para internos de modo que la normativa (con distancias
 # típicamente menores) no desplace por completo a los documentos del usuario.
-MIXED_CONTEXT_CAP = 8       # total de chunks enviados al LLM en modo mixto
-MIXED_RESERVE_INTERNOS = 3  # cupos garantizados para internos (si existen y pasan filtro)
+MIXED_CONTEXT_CAP = 8       # legacy — reemplazado por cuotas fijas
+MIXED_RESERVE_INTERNOS = 3  # legacy — cupo internos en merge anterior
+MIXED_INTERNAL_MAX_DISTANCE = 0.55  # legacy — umbral internos en merge anterior
 
-# Umbral de distancia para INTERNOS en modo "Todas las fuentes".
-# Más permisivo que INTERNAL_MAX_DISTANCE (0.40, usado en consultas de normativa pura)
-# para que documentos internos con cláusulas relevantes a una consulta cruzada
-# (p.ej. tránsito, rebaja de aranceles) NO se descarten antes de la fusión.
-# NOTA: solo aplica a la rama "all"; el modo "Solo documentos internos" no usa filtro.
-MIXED_INTERNAL_MAX_DISTANCE = 0.55  # ≥ 45 % de similitud — captura matches cruzados genuinos
+# ── Extracción Aislada con Cuotas Fijas (modo "Todas las fuentes") ─────────────
+# Cada colección aporta su propio Top-K sin competir entre sí por posición.
+# Normativa y documentos internos se concatenan garantizando representación de ambas,
+# independientemente del score absoluto de cada fragmento.
+MIXED_QUOTA_NORMATIVA   = 4  # fragmentos garantizados de normativa oficial
+MIXED_QUOTA_INTERNOS    = 3  # fragmentos garantizados de documentos internos
+MIXED_TOP_K_CANDIDATES  = 6  # candidatos por colección antes de aplicar cuota
 
 from backend.indexer.vectorstore import (
     VectorStore,
@@ -345,6 +347,76 @@ class RAGEngine:
         merged = reserved + fill
         merged.sort(key=self._rank_key)
         return merged
+
+    def _retrieve_all_mode_balanced(
+        self,
+        query: str,
+        user_id: str | None,
+    ) -> tuple[list[dict[str, Any]], str, list[dict]]:
+        """
+        Extracción Aislada con Cuotas Fijas para el modo 'Todas las fuentes'.
+
+        Cada colección (Normativa Oficial y Documentos Internos) contribuye su
+        propio Top-K de forma INDEPENDIENTE, sin competir entre sí por posición.
+        El contexto final garantiza la presencia de ambas fuentes antes de pasar
+        al LLM, independientemente del score absoluto de cada fragmento.
+
+        Pipeline:
+          1. Búsqueda semántica independiente por colección.
+          2. Re-ranking híbrido (semántico + léxico) por separado.
+          3. Cuota fija: top MIXED_QUOTA_NORMATIVA de normativa
+                        + top MIXED_QUOTA_INTERNOS de internos.
+          4. Concatenación: normativa primero (autoridad), internos segundo.
+
+        NOTA: Este método solo se activa desde _retrieve_documents cuando
+        effective_filter == "all" y no se detectó un documento interno por título.
+        El pipeline de 'Solo documentos internos' no llama a este método.
+        """
+        meta_int = {"user_id": user_id} if user_id else None
+
+        # 1. Búsquedas independientes por colección
+        try:
+            norm_candidates = self.vector_store.search(
+                query=query,
+                collection_name=COLLECTION_NORMATIVA,
+                top_k=MIXED_TOP_K_CANDIDATES,
+            )
+        except Exception as e:
+            logger.error(f"[all-balanced] Error buscando normativa: {e}")
+            norm_candidates = []
+
+        try:
+            int_candidates = self.vector_store.search(
+                query=query,
+                collection_name=COLLECTION_INTERNOS,
+                top_k=MIXED_TOP_K_CANDIDATES,
+                filter_metadata=meta_int,
+            )
+        except Exception as e:
+            logger.error(f"[all-balanced] Error buscando internos: {e}")
+            int_candidates = []
+
+        # 2. Re-ranking híbrido independiente por colección
+        self._apply_hybrid_reranking(query, norm_candidates)
+        self._apply_hybrid_reranking(query, int_candidates)
+        norm_candidates.sort(key=self._rank_key)
+        int_candidates.sort(key=self._rank_key)
+
+        # 3. Cuotas fijas — sin competencia cross-collection
+        top_normativa = norm_candidates[:MIXED_QUOTA_NORMATIVA]
+        top_internos  = int_candidates[:MIXED_QUOTA_INTERNOS]
+
+        # 4. Concatenar: normativa primero (fuente oficial), internos segundo
+        top_results = top_normativa + top_internos
+
+        logger.info(
+            f"[all-balanced] normativa={len(top_normativa)}/{len(norm_candidates)} chunks "
+            f"internos={len(top_internos)}/{len(int_candidates)} chunks "
+            f"→ {len(top_results)} totales en contexto"
+        )
+
+        context_text, sources = self._build_context(top_results)
+        return top_results, context_text, sources
 
     def _extract_title_fragment(self, query: str) -> str:
         """
@@ -919,6 +991,13 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         # la búsqueda semántica se restringe a esa colección
         is_internal_only = self._is_internal_doc_query(query) and filter_collection == "all"
         effective_filter = "internos" if is_internal_only else filter_collection
+
+        # Paso 2b: "Todas las fuentes" sin documento específico por título →
+        # extracción aislada con cuotas fijas por colección (ningún fragmento
+        # de normativa compite con internos por la misma posición del Top-K).
+        if effective_filter == "all" and not title_results:
+            return self._retrieve_all_mode_balanced(query, user_id)
+
         collection_strategy = self._determine_collection_priority(query_type, effective_filter)
 
         # Paso 3: búsqueda semántica
