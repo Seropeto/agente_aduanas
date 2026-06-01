@@ -100,6 +100,13 @@ TOP_K_MIXED = 5
 MIXED_CONTEXT_CAP = 8       # total de chunks enviados al LLM en modo mixto
 MIXED_RESERVE_INTERNOS = 3  # cupos garantizados para internos (si existen y pasan filtro)
 
+# Umbral de distancia para INTERNOS en modo "Todas las fuentes".
+# Más permisivo que INTERNAL_MAX_DISTANCE (0.40, usado en consultas de normativa pura)
+# para que documentos internos con cláusulas relevantes a una consulta cruzada
+# (p.ej. tránsito, rebaja de aranceles) NO se descarten antes de la fusión.
+# NOTA: solo aplica a la rama "all"; el modo "Solo documentos internos" no usa filtro.
+MIXED_INTERNAL_MAX_DISTANCE = 0.55  # ≥ 45 % de similitud — captura matches cruzados genuinos
+
 from backend.indexer.vectorstore import (
     VectorStore,
     COLLECTION_NORMATIVA,
@@ -976,13 +983,16 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 logger.warning(f"Error en fallback semántico internos: {e}")
 
         # Paso 5: filtro de distancia solo para búsquedas mixtas (all)
-        # Los title_results (distance=0) siempre pasan este filtro
+        # Los title_results (distance=0) siempre pasan este filtro.
+        # En modo "all" los internos usan un umbral MÁS permisivo (MIXED_INTERNAL_MAX_DISTANCE)
+        # que el de normativa pura, para que cláusulas internas relevantes a consultas
+        # cruzadas lleguen a la fusión y no se descarten por distancia.
         if effective_filter == "all":
             filtered = []
             for r in all_results:
                 d = r.get("distance", 1.0)
                 if r.get("collection") == COLLECTION_INTERNOS:
-                    if d <= INTERNAL_MAX_DISTANCE:
+                    if d <= MIXED_INTERNAL_MAX_DISTANCE:
                         filtered.append(r)
                 else:
                     if d <= NORMATIVA_MAX_DISTANCE:
