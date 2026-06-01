@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import aiofiles
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, LOGS_DIR, UPLOADS_DIR
 from backend.indexer.document_processor import DocumentProcessor
-from backend.indexer.vectorstore import VectorStore, COLLECTION_INTERNOS
+from backend.indexer.vectorstore import VectorStore, COLLECTION_INTERNOS, COLLECTION_NORMATIVA
 from backend.query_logger import get_queries, get_summary, initialize_db, log_query
 from backend.rag.engine import RAGEngine
 from backend.scheduler import get_status, run_now, start_scheduler, stop_scheduler
@@ -707,6 +707,97 @@ async def clear_semantic_cache(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Error vaciando caché: {e}")
         raise HTTPException(status_code=500, detail=f"Error al vaciar la caché: {e}")
+
+
+# ------------------------------------------------------------------ #
+# Rutas: Ingesta de Normativa Oficial (admin)                          #
+# ------------------------------------------------------------------ #
+@app.post("/api/admin/ingest/normativa")
+async def ingest_normativa(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    source: str = Form("Biblioteca del Congreso Nacional de Chile"),
+    content_type: str = Form("ley"),
+    date: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Ingesta un PDF directamente en la colección de Normativa Oficial.
+    Los chunks se etiquetan con tipo_documento=ley_estructural y NO
+    llevan user_id, por lo que quedan disponibles para todos los usuarios.
+    Este endpoint es la única vía autorizada para cargar leyes estructurales
+    (Ordenanza de Aduanas, DL 825, Compendio, Arancel). No usar el endpoint
+    genérico de subida de documentos internos para este propósito.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No se recibió ningún archivo")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in {".pdf", ".docx", ".txt"}:
+        raise HTTPException(status_code=400, detail="Solo se aceptan PDF, DOCX o TXT")
+
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande. Máximo: {MAX_FILE_SIZE // (1024*1024)} MB")
+
+    file_hash = hashlib.sha256(content).hexdigest()[:16]
+
+    # Verificar duplicado en normativa
+    if vector_store.is_document_indexed(file_hash, id_type="doc_id", collection_name=COLLECTION_NORMATIVA):
+        raise HTTPException(status_code=409, detail="Este documento ya está indexado en Normativa Oficial")
+
+    safe_filename = _sanitize_filename(file.filename)
+    file_path = UPLOADS_DIR / f"normativa_{file_hash}_{safe_filename}"
+    try:
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar el archivo: {e}")
+
+    doc_title = title or Path(file.filename).stem
+
+    async def _ingest_background():
+        loop = asyncio.get_running_loop()
+        try:
+            metadata = {
+                "title":          doc_title,
+                "filename":       file.filename,
+                "content_type":   content_type,
+                "source":         source,
+                "doc_id":         file_hash,
+                "url":            "",
+                "date":           date or "",
+                "tipo_documento": "ley_estructural",
+                # Sin user_id — normativa global disponible para todos
+            }
+            chunks = await loop.run_in_executor(
+                None, document_processor.process_file, file_path, metadata
+            )
+            if not chunks:
+                logger.error(f"[ingest-normativa] Sin chunks extraídos de '{file.filename}'")
+                return
+            added = await loop.run_in_executor(
+                None, vector_store.add_documents, chunks, COLLECTION_NORMATIVA
+            )
+            logger.info(
+                f"[ingest-normativa] '{doc_title}' → {added} chunks en {COLLECTION_NORMATIVA}",
+                extra={"event": "normativa_ingested", "doc_id": file_hash, "chunks": added},
+            )
+        except Exception as e:
+            logger.error(f"[ingest-normativa] Error procesando '{file.filename}': {e}", exc_info=True)
+
+    background_tasks.add_task(_ingest_background)
+
+    logger.info(f"[ingest-normativa] '{doc_title}' encolado para indexación (doc_id={file_hash})")
+    return {
+        "message":  f"'{doc_title}' encolado para indexación en Normativa Oficial",
+        "doc_id":   file_hash,
+        "filename": file.filename,
+        "status":   "processing",
+    }
 
 
 # ------------------------------------------------------------------ #
