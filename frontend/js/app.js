@@ -453,7 +453,18 @@ async function sendMessage() {
             firstToken = true;
             stageEl.style.display = 'none';
           }
-          accumulatedText += payload.text;
+          // Guardia defensiva: si el backend envía JSON estructurado en lugar de
+          // prosa limpia, extraer solo analisis_texto antes de renderizar en el DOM.
+          let tokenText = payload.text || '';
+          if (tokenText.trim().startsWith('{')) {
+            try {
+              const parsed = JSON.parse(tokenText);
+              if (parsed && typeof parsed.analisis_texto === 'string') {
+                tokenText = parsed.analisis_texto;
+              }
+            } catch (_) { /* JSON inválido — renderizar como texto plano */ }
+          }
+          accumulatedText += tokenText;
           textEl.textContent = accumulatedText;
           scrollToBottom();
 

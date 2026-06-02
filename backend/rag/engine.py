@@ -693,9 +693,11 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 max_tokens=1024,
                 temperature=LLM_TEMPERATURE,
                 system=SYSTEM_PROMPT,
-                messages=messages,
+                messages=[*messages, {"role": "assistant", "content": "{"}],
             )
-            return response.content[0].text
+            raw = "{" + response.content[0].text
+            _, texto = self._parse_llm_json(raw)
+            return texto
         except Exception as e:
             logger.warning(f"Error generando respuesta temporal: {e}")
             return context  # fallback: devolver el contexto crudo
