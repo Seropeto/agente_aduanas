@@ -89,10 +89,14 @@ class DocumentProcessor:
             return []
 
         chunks = self._chunk_text(text)
+        ctx_header = self._build_chunk_header(metadata)
         result = []
         for i, chunk in enumerate(chunks):
             chunk_meta = {**metadata, "chunk_index": i, "total_chunks": len(chunks)}
-            result.append({"text": chunk, "metadata": chunk_meta})
+            result.append({
+                "text": ctx_header + chunk if ctx_header else chunk,
+                "metadata": chunk_meta,
+            })
 
         logger.info(f"Procesado {file_path.name}: {len(result)} chunks generados")
         return result
@@ -117,10 +121,14 @@ class DocumentProcessor:
             metadata["doc_id"] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
         chunks = self._chunk_text(text)
+        ctx_header = self._build_chunk_header(metadata)
         result = []
         for i, chunk in enumerate(chunks):
             chunk_meta = {**metadata, "chunk_index": i, "total_chunks": len(chunks)}
-            result.append({"text": chunk, "metadata": chunk_meta})
+            result.append({
+                "text": ctx_header + chunk if ctx_header else chunk,
+                "metadata": chunk_meta,
+            })
 
         return result
 
@@ -346,6 +354,28 @@ class DocumentProcessor:
     # ------------------------------------------------------------------ #
     # Chunking                                                              #
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _build_chunk_header(metadata: dict) -> str:
+        """
+        Construye un encabezado de contexto global para inyectar al inicio de cada chunk.
+
+        Al incluir el título y tipo del documento en el TEXTO del chunk (no solo en
+        los metadatos), el modelo de embeddings codifica la identidad del documento
+        en el vector. Esto permite que queries como "¿De qué trata el Oficio 151?"
+        recuperen chunks de ese documento aunque el contenido del fragmento no
+        mencione explícitamente el título.
+
+        Formato: "{title} | {content_type} | {date}\n"
+        """
+        parts = []
+        if title := (metadata.get("title") or "").strip():
+            parts.append(title)
+        if ct := (metadata.get("content_type") or "").strip():
+            parts.append(ct)
+        if date := (metadata.get("date") or "").strip():
+            parts.append(date)
+        return " | ".join(parts) + "\n" if parts else ""
 
     def _chunk_text(self, text: str) -> list[str]:
         """
