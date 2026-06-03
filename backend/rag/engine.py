@@ -259,9 +259,11 @@ class RAGEngine:
             data = json.loads(text)
             found = bool(data.get("respuesta_encontrada", False))
             texto = str(data.get("analisis_texto", NOT_FOUND_RESPONSE)).strip()
-            # Cuando el modelo dice false, siempre usar el mensaje hardcodeado
             if not found:
-                texto = NOT_FOUND_RESPONSE
+                if RAG_MODE != "open":
+                    # Modo strict: siempre reemplazar con mensaje hardcodeado.
+                    texto = NOT_FOUND_RESPONSE
+                # Modo open: respetar analisis_texto del LLM aunque diga false.
             return found, texto
         except Exception as exc:
             logger.warning(f"JSON parse falló ({exc}) — usando NOT_FOUND_RESPONSE")
@@ -651,7 +653,19 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
         hint = type_hints.get(query_type, "")
 
         if context:
-            message = f"""Documentos recuperados del sistema para esta consulta:
+            if RAG_MODE == "open":
+                message = f"""Documentos de referencia recuperados del sistema (úsalos si son relevantes):
+
+{context}
+
+---
+
+{hint}
+Consulta del usuario: {query}
+
+Responde según el esquema JSON. Si los documentos anteriores responden la pregunta, úsalos citando nombre y fecha. Si no la responden o son insuficientes, usa tu conocimiento experto sobre normativa aduanera chilena. En modo abierto, "respuesta_encontrada" debe ser true para consultas de aduanas o comercio exterior."""
+            else:
+                message = f"""Documentos recuperados del sistema para esta consulta:
 
 {context}
 
@@ -662,7 +676,13 @@ Consulta del usuario: {query}
 
 Responde según el esquema JSON definido en las instrucciones del sistema. Usa únicamente la información contenida en los bloques anteriores y cita nombre, número y fecha de cada fuente."""
         else:
-            message = f"""{hint}
+            if RAG_MODE == "open":
+                message = f"""{hint}
+Consulta del usuario: {query}
+
+No hay documentos indexados sobre este tema. Usa tu conocimiento experto sobre la normativa aduanera y tributaria de Chile para responder. "respuesta_encontrada" debe ser true."""
+            else:
+                message = f"""{hint}
 Consulta del usuario: {query}
 
 No hay documentos sobre este tema en el sistema en este momento. Responde con el esquema JSON indicando "respuesta_encontrada": false."""
