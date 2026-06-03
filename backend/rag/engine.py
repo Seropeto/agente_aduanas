@@ -4,6 +4,7 @@ Integra ChromaDB para recuperación de documentos y Claude para generación de r
 """
 import asyncio
 import logging
+import os
 import re
 import time
 from typing import Any, Optional
@@ -170,6 +171,47 @@ Organismos reguladores:
 - La restricción de ámbito aplica SOLO a consultas que dependen de tu conocimiento general o de <NORMATIVA_OFICIAL_RECUPERADA>: en ese caso el tema debe ser normativa aduanera y comercio exterior de Chile.
 - EXCEPCIÓN OBLIGATORIA: si hay contenido en <DOCUMENTOS_INTERNOS_CARGADOS>, SIEMPRE debes analizarlo y responder sobre él, AUNQUE su contenido no trate de aduanas (contratos, declaraciones, facturas, certificados, etc.). Los documentos internos los subió el usuario y nunca se consideran "fuera de ámbito".
 - Solo responde el mensaje de "fuera de alcance" cuando NO haya ningún documento interno relevante Y la consulta tampoco sea de normativa aduanera/comercio exterior. En ese caso: {"respuesta_encontrada": false, "analisis_texto": "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile."} """
+
+
+# ── Modo de operación ─────────────────────────────────────────────────────────
+# RAG_MODE="strict" (default): el LLM solo responde con lo que está en los vectores.
+# RAG_MODE="open": si el contexto es insuficiente, el LLM usa su conocimiento
+#   paramétrico sobre normativa aduanera chilena como fallback.
+#   Activar en Coolify con ENV VAR RAG_MODE=open para la demo; revertir después.
+RAG_MODE = os.getenv("RAG_MODE", "strict")
+
+# Prompt de modo abierto: mantiene JSON para compatibilidad con _parse_llm_json
+# y con el guard del frontend, pero permite conocimiento paramétrico como fallback.
+SYSTEM_PROMPT_OPEN = """Eres AgentIA, Consultor Senior en Normativa Aduanera y Tributaria de Chile.
+
+Responde ÚNICAMENTE con un objeto JSON válido. Sin texto fuera del JSON.
+
+Esquema estricto:
+{"respuesta_encontrada": boolean, "analisis_texto": string}
+
+El contexto puede llegar en dos bloques etiquetados:
+- <NORMATIVA_OFICIAL_RECUPERADA>: normativa oficial del sistema (leyes, decretos, circulares, tratados).
+- <DOCUMENTOS_INTERNOS_CARGADOS>: archivos que el propio usuario subió al sistema.
+
+Instrucciones:
+- Si el contexto contiene la información: "respuesta_encontrada": true. Cita nombre, número y fecha de cada fuente. Usa markdown en analisis_texto.
+- Si el contexto es insuficiente o viene vacío: utiliza tu conocimiento experto sobre normativa aduanera y tributaria de Chile (Ordenanza de Aduanas DFL 30/2005, DL 825 Ley del IVA, Compendio de Normas Aduaneras, Arancel Aduanero, circulares del SNA y del SII). Responde como experto legal. "respuesta_encontrada": true. Indica en analisis_texto que la respuesta se basa en normativa vigente según el conocimiento del modelo, e invita a verificar en www.aduana.cl o www.leychile.cl.
+- NUNCA retornes "respuesta_encontrada": false ante consultas de aduanas, IVA, aranceles o comercio exterior: siempre responde con el nivel de conocimiento disponible.
+- No menciones las etiquetas de los bloques en tu respuesta; son metadatos internos.
+- Prohibido: plazos o montos precisos sin respaldo documental del contexto.
+
+Organismos reguladores:
+- SEC: eléctricos, gas, combustibles. SAG: animales, plantas, agropecuario.
+- ISP: medicamentos, cosméticos, dispositivos médicos. SUBTEL: telecomunicaciones.
+- SII: tributación interna, IVA. Aduanas (SNA): clasificación arancelaria, DUA/DAM.
+
+Ámbito: normativa aduanera y comercio exterior de Chile.
+Solo fuera de ámbito: {"respuesta_encontrada": false, "analisis_texto": "Esta consulta está fuera del alcance de AgentIA Aduanas, que se especializa en normativa aduanera y comercio exterior de Chile."} """
+
+# Prompt activo seleccionado por RAG_MODE
+_ACTIVE_PROMPT = SYSTEM_PROMPT_OPEN if RAG_MODE == "open" else SYSTEM_PROMPT
+
+logger.info(f"RAG_MODE: {RAG_MODE} — prompt activo: {'OPEN (parametric fallback)' if RAG_MODE == 'open' else 'STRICT (solo vectores)'}")
 
 
 class RAGEngine:
@@ -692,7 +734,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 model=MODEL_SIMPLE,
                 max_tokens=1024,
                 temperature=LLM_TEMPERATURE,
-                system=SYSTEM_PROMPT,
+                system=_ACTIVE_PROMPT,
                 messages=[*messages, {"role": "assistant", "content": "{"}],
             )
             raw = "{" + response.content[0].text
@@ -811,8 +853,9 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 "cache_hit": True,
             }
 
-        # Short-circuit: sin contexto → respuesta hardcodeada, sin llamar al LLM
-        if not context_text:
+        # Short-circuit: sin contexto → en modo strict retorna NOT_FOUND sin llamar al LLM.
+        # En modo open el LLM se llama igual para usar conocimiento paramétrico.
+        if not context_text and RAG_MODE != "open":
             return {
                 "answer": NOT_FOUND_RESPONSE,
                 "sources": [],
@@ -836,7 +879,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 model=selected_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
-                system=SYSTEM_PROMPT,
+                system=_ACTIVE_PROMPT,
                 messages=[*messages, {"role": "assistant", "content": "{"}],
             )
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
@@ -1219,8 +1262,9 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             })
             return
 
-        # Short-circuit: sin contexto → respuesta hardcodeada, sin llamar al LLM
-        if not context_text:
+        # Short-circuit: sin contexto → en modo strict retorna NOT_FOUND sin llamar al LLM.
+        # En modo open el LLM se llama igual para usar conocimiento paramétrico.
+        if not context_text and RAG_MODE != "open":
             yield _sse({"type": "token", "text": NOT_FOUND_RESPONSE})
             yield _sse({"type": "done", "sources": [], "query_type": query_type, "chunks": 0})
             return
@@ -1242,7 +1286,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 model=_stream_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
-                system=SYSTEM_PROMPT,
+                system=_ACTIVE_PROMPT,
                 messages=[*messages, {"role": "assistant", "content": "{"}],
             )
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
