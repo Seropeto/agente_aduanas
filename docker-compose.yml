@@ -20,8 +20,6 @@ services:
   agentia:
     build: .
     restart: unless-stopped
-    ports:
-      - "8001:8000"
     
     environment:
       LOG_FORMAT: "json"
