@@ -21,6 +21,8 @@ bcrypt==4.0.1
 aiosmtplib==3.0.1
 python-dateutil==2.9.0
 reportlab==4.2.5
+# PostgreSQL — metadatos de documentos (Ticket 001)
+asyncpg==0.29.0
 # Telemetría
 sentry-sdk[fastapi]==2.22.0
 python-json-logger==2.0.7

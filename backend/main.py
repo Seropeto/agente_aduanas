@@ -30,6 +30,13 @@ from backend.billing.router import router as billing_router
 from backend.memory import initialize_memory_db, get_history, save_turn, delete_history
 from backend.pdf_export import generate_pdf
 from backend.normative_changelog import initialize_changelog_db, get_changelog_page
+from backend.database import init_pool, close_pool, is_pg_enabled
+from backend.database import (
+    upsert_document as pg_upsert,
+    delete_document_pg,
+    query_documents as pg_query,
+    count_documents as pg_count,
+)
 
 # ------------------------------------------------------------------ #
 # Telemetría (logging estructurado + Sentry)                           #
@@ -103,6 +110,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error inicializando changelog: {e}")
 
     try:
+        await init_pool()
+        logger.info(f"PostgreSQL: {'activo' if is_pg_enabled() else 'desactivado (POSTGRES_URL no configurado)'}")
+    except Exception as e:
+        logger.error(f"Error inicializando PostgreSQL: {e}")
+
+    try:
         start_scheduler()
         logger.info("Scheduler iniciado")
     except Exception as e:
@@ -115,6 +128,7 @@ async def lifespan(app: FastAPI):
     logger.info("Cerrando AgentIA Aduanas...")
     stop_scheduler()
     vector_store.close()
+    await close_pool()
     logger.info("Aplicación cerrada correctamente")
 
 
@@ -537,6 +551,18 @@ async def upload_document(
             None, vector_store.add_documents, chunks, COLLECTION_INTERNOS
         )
 
+        # Persistir metadatos en PostgreSQL (no-op si PG no está configurado)
+        await pg_upsert(
+            doc_id=file_hash,
+            user_id=current_user["id"],
+            title=metadata["title"],
+            filename=file.filename,
+            content_type=metadata["content_type"],
+            source=metadata["source"],
+            fecha_documento=date or None,
+            total_chunks=added,
+        )
+
         logger.info(f"Documento indexado: {file.filename} ({added} chunks)")
         return {
             "message": f"Documento '{file.filename}' indexado exitosamente",
@@ -579,6 +605,9 @@ async def delete_document(doc_id: str):
         if doc_info and doc_info.get("filename"):
             _try_delete_file(doc_info["filename"], doc_id)
 
+        # Eliminar de PostgreSQL (no-op si PG no está configurado)
+        await delete_document_pg(doc_id, current_user.get("id", ""))
+
         # Vaciar caché semántica: las respuestas cacheadas pueden referenciar
         # el documento eliminado y quedarían obsoletas
         try:
@@ -596,6 +625,58 @@ async def delete_document(doc_id: str):
     except Exception as e:
         logger.error(f"Error eliminando documento {doc_id}: {e}")
         raise HTTPException(status_code=500, detail="Error al eliminar el documento")
+
+
+# ------------------------------------------------------------------ #
+# Rutas: Query de metadatos PostgreSQL (Ticket 001)                    #
+# ------------------------------------------------------------------ #
+@app.get("/api/documents/query")
+async def query_documents_metadata(
+    content_type: Optional[str] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    search_title: Optional[str] = None,
+    tipo_documento: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Filtra documentos del usuario por metadatos usando PostgreSQL.
+
+    Multi-tenant: user_id se toma del token JWT — el usuario SOLO ve sus documentos.
+    Si PostgreSQL no está configurado, retorna lista vacía con aviso.
+
+    Ejemplo acceptance criteria:
+      GET /api/documents/query?content_type=factura&fecha_desde=2024-10-01&fecha_hasta=2025-03-31
+    """
+    if not is_pg_enabled():
+        return {
+            "documents": [],
+            "total": 0,
+            "pg_enabled": False,
+            "message": "PostgreSQL no está configurado en este entorno.",
+        }
+
+    user_id = current_user["id"]
+    docs = await pg_query(
+        user_id=user_id,
+        content_type=content_type,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        search_title=search_title,
+        tipo_documento=tipo_documento,
+        limit=min(limit, 500),
+        offset=offset,
+    )
+    total = await pg_count(user_id)
+    return {
+        "documents": docs,
+        "total": total,
+        "pg_enabled": True,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -710,94 +791,14 @@ async def clear_semantic_cache(current_user: dict = Depends(get_current_user)):
 
 
 # ------------------------------------------------------------------ #
-# Rutas: Ingesta de Normativa Oficial (admin)                          #
+# DEPRECADO (Ticket 004): la carga manual de normativa oficial fue     #
+# eliminada permanentemente. La normativa oficial se ingesta SOLO de    #
+# forma autónoma vía `python cron_update_laws.py`, que consume fuentes   #
+# vivas (BCN/Ley Chile, Aduanas, SII) con chunking estructural por       #
+# artículo. No reintroducir un endpoint de subida manual para la         #
+# colección oficial: la integridad de las leyes no debe depender de      #
+# carga humana.                                                          #
 # ------------------------------------------------------------------ #
-@app.post("/api/admin/ingest/normativa")
-async def ingest_normativa(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    title: Optional[str] = Form(None),
-    source: str = Form("Biblioteca del Congreso Nacional de Chile"),
-    content_type: str = Form("ley"),
-    date: Optional[str] = Form(None),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Ingesta un PDF directamente en la colección de Normativa Oficial.
-    Los chunks se etiquetan con tipo_documento=ley_estructural y NO
-    llevan user_id, por lo que quedan disponibles para todos los usuarios.
-    Este endpoint es la única vía autorizada para cargar leyes estructurales
-    (Ordenanza de Aduanas, DL 825, Compendio, Arancel). No usar el endpoint
-    genérico de subida de documentos internos para este propósito.
-    """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No se recibió ningún archivo")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in {".pdf", ".docx", ".txt"}:
-        raise HTTPException(status_code=400, detail="Solo se aceptan PDF, DOCX o TXT")
-
-    content = await file.read()
-    if len(content) == 0:
-        raise HTTPException(status_code=400, detail="El archivo está vacío")
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande. Máximo: {MAX_FILE_SIZE // (1024*1024)} MB")
-
-    file_hash = hashlib.sha256(content).hexdigest()[:16]
-
-    # Verificar duplicado en normativa
-    if vector_store.is_document_indexed(file_hash, id_type="doc_id", collection_name=COLLECTION_NORMATIVA):
-        raise HTTPException(status_code=409, detail="Este documento ya está indexado en Normativa Oficial")
-
-    safe_filename = _sanitize_filename(file.filename)
-    file_path = UPLOADS_DIR / f"normativa_{file_hash}_{safe_filename}"
-    try:
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al guardar el archivo: {e}")
-
-    doc_title = title or Path(file.filename).stem
-
-    async def _ingest_background():
-        loop = asyncio.get_running_loop()
-        try:
-            metadata = {
-                "title":          doc_title,
-                "filename":       file.filename,
-                "content_type":   content_type,
-                "source":         source,
-                "doc_id":         file_hash,
-                "url":            "",
-                "date":           date or "",
-                "tipo_documento": "ley_estructural",
-                # Sin user_id — normativa global disponible para todos
-            }
-            chunks = await loop.run_in_executor(
-                None, document_processor.process_file, file_path, metadata
-            )
-            if not chunks:
-                logger.error(f"[ingest-normativa] Sin chunks extraídos de '{file.filename}'")
-                return
-            added = await loop.run_in_executor(
-                None, vector_store.add_documents, chunks, COLLECTION_NORMATIVA
-            )
-            logger.info(
-                f"[ingest-normativa] '{doc_title}' → {added} chunks en {COLLECTION_NORMATIVA}",
-                extra={"event": "normativa_ingested", "doc_id": file_hash, "chunks": added},
-            )
-        except Exception as e:
-            logger.error(f"[ingest-normativa] Error procesando '{file.filename}': {e}", exc_info=True)
-
-    background_tasks.add_task(_ingest_background)
-
-    logger.info(f"[ingest-normativa] '{doc_title}' encolado para indexación (doc_id={file_hash})")
-    return {
-        "message":  f"'{doc_title}' encolado para indexación en Normativa Oficial",
-        "doc_id":   file_hash,
-        "filename": file.filename,
-        "status":   "processing",
-    }
 
 
 # ------------------------------------------------------------------ #

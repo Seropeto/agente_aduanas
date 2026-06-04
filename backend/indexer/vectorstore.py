@@ -5,6 +5,7 @@ Gestiona tres colecciones:
   - documentos_internos: documentos subidos por el usuario
   - cache_consultas: caché semántica de respuestas generadas
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -24,7 +25,8 @@ COLLECTION_NORMATIVA = "normativa_aduanera"
 COLLECTION_INTERNOS = "documentos_internos"
 COLLECTION_CACHE = "cache_consultas"
 
-CACHE_DISTANCE_THRESHOLD = 0.08   # similitud coseno ≥ 0.92
+CACHE_DISTANCE_THRESHOLD = 0.05   # similitud coseno ≥ 0.95 (estricto: evita
+                                  # falsos positivos semánticos entre consultas distintas)
 CACHE_TTL_HOURS = 24              # tiempo de vida de entradas de caché
 
 
@@ -111,13 +113,31 @@ class VectorStore:
             raise ValueError(f"Colección desconocida: {collection_name}")
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        """Genera embeddings para una lista de textos."""
+        """Genera embeddings para una lista de textos (SÍNCRONO, bloquea CPU).
+
+        Uso interno y desde contextos que ya corren en un hilo (run_in_executor /
+        to_thread / scheduler). NO llamar directamente desde el event loop async:
+        usar aembed() en su lugar.
+        """
         try:
             embeddings = self._embedding_model.encode(texts, show_progress_bar=False)
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Error generando embeddings: {e}")
             raise
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Versión ASÍNCRONA de _embed (Ticket 003).
+
+        Delega el cálculo pesado de CPU (model.encode) al pool de hilos por defecto
+        del event loop, de modo que FastAPI nunca se congela durante la vectorización.
+        SentenceTransformer/PyTorch liberan el GIL durante el cómputo, por lo que el
+        event loop sigue despachando solicitudes concurrentes (chat streaming, etc.).
+        """
+        self._ensure_initialized()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._embed, texts)
 
     def _generate_chunk_id(self, doc_id: str, chunk_index: int) -> str:
         """Genera un ID único para un chunk."""
@@ -613,6 +633,39 @@ class VectorStore:
             logger.info(f"[cache] Almacenado: {cache_id}")
         except Exception as e:
             logger.warning(f"[cache] Error almacenando: {e}")
+
+    # ------------------------------------------------------------------ #
+    # Wrappers asíncronos (Ticket 003)                                     #
+    # Delegan la operación completa (embeddings + I/O de ChromaDB) al pool #
+    # de hilos, liberando el event loop de FastAPI.                        #
+    # ------------------------------------------------------------------ #
+
+    async def aadd_documents(self, chunks: list[dict[str, Any]],
+                             collection_name: str = COLLECTION_NORMATIVA) -> int:
+        """Versión async de add_documents (no bloquea el event loop)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.add_documents, chunks, collection_name)
+
+    async def asearch(self, query: str, collection_name: str | None = None,
+                      top_k: int = 3, filter_metadata: dict | None = None) -> list[dict[str, Any]]:
+        """Versión async de search (no bloquea el event loop)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.search(query, collection_name, top_k, filter_metadata)
+        )
+
+    async def acache_lookup(self, query: str) -> dict | None:
+        """Versión async de cache_lookup (no bloquea el event loop)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.cache_lookup, query)
+
+    async def acache_store(self, query: str, answer: str, sources: list,
+                           query_type: str) -> None:
+        """Versión async de cache_store (no bloquea el event loop)."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, self.cache_store, query, answer, sources, query_type
+        )
 
     def close(self):
         """Cierra la conexión con ChromaDB."""

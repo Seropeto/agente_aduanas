@@ -1,0 +1,8 @@
+ARANCEL ADUANERO DE CHILE
+CAPÍTULO 90 — INSTRUMENTOS Y APARATOS DE ÓPTICA, MEDIDA Y CONTROL
+
+Artículo 9026.- Partida 90.26 — Instrumentos y aparatos para medida o control del caudal, nivel, presión u otras características variables de líquidos o gases (por ejemplo: caudalímetros, indicadores de nivel, manómetros, contadores de calor), excepto los instrumentos y aparatos de las partidas 90.14, 90.15, 90.28 o 90.32. Esta partida cubre instrumentos de MEDICIÓN propiamente tal de una variable física. Derecho ad valorem general: 6% salvo preferencia arancelaria por acuerdo comercial.
+
+Artículo 9032.- Partida 90.32 — Instrumentos y aparatos automáticos para regulación o control automáticos. Esta partida cubre los instrumentos cuya función es REGULAR o CONTROLAR automáticamente una magnitud, manteniéndola en un valor deseado y estabilizándola frente a perturbaciones, mediante un dispositivo de mando que actúa en función de la variable medida. La diferencia esencial con la partida 90.26 es la presencia de un lazo de control automático (retroalimentación). Derecho ad valorem general: 6% salvo preferencia arancelaria por acuerdo comercial.
+
+Artículo 9999.- Criterio de desempate 90.26 vs 90.32: si el equipo solo mide y despliega una variable, clasifica en 90.26. Si además regula o controla automáticamente esa variable mediante retroalimentación, clasifica en 90.32. En artículos compuestos con funciones mixtas de medición y de audio/video, se aplica la Regla General Interpretativa 3 b): la clasificación se determina por la materia o el componente que confiere el carácter esencial al artículo.

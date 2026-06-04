@@ -1,4 +1,23 @@
 services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       agentia_db
+      POSTGRES_USER:     agentia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentia_dev_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentia -d agentia_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    ports:
+      - "5435:5432"
+
   agentia:
     build: .
     restart: unless-stopped
@@ -11,7 +30,11 @@ services:
       LOG_LEVEL: "INFO"
       ENVIRONMENT: "production"
       SERVICE_NAME: "agentia-aduanas"
+      POSTGRES_URL: "postgresql://agentia:${POSTGRES_PASSWORD:-agentia_dev_pass}@postgres:5432/agentia_db"
       # SENTRY_DSN e SENTRY_TRACES_RATE se inyectan desde Coolify/Dokploy secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - chroma_data:/app/data/chroma_db
       - uploads_data:/app/data/uploads
@@ -27,3 +50,4 @@ volumes:
   chroma_data:
   uploads_data:
   logs_data:
+  postgres_data:

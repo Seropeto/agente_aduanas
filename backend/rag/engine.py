@@ -24,6 +24,15 @@ from backend.normative_changelog import get_changes_by_period, parse_temporal_qu
 MODEL_SIMPLE  = "claude-haiku-4-5-20251001"   # consultas simples (~70% más barato)
 MODEL_COMPLEX = "claude-haiku-4-5-20251001"   # TEMPORAL: Sonnet 4.6 con incidente activo (revertir cuando Anthropic resuelva)
 
+# Modelos que NO soportan assistant message prefill ({"role":"assistant","content":"{"}).
+# Para estos se omite el prefill y se parsea el JSON del cuerpo de la respuesta.
+# Haiku sí soporta prefill (lo usamos para blindar contra prompt leakage).
+PREFILL_UNSUPPORTED = {"claude-sonnet-4-6"}
+
+
+def _supports_prefill(model: str) -> bool:
+    return model not in PREFILL_UNSUPPORTED
+
 SIMPLE_KEYWORDS = [
     "qué es", "que es", "qué son", "que son", "define", "definición",
     "cuándo", "cuando", "cuánto", "cuanto", "plazo", "fecha",
@@ -157,6 +166,7 @@ Instrucciones:
 - Si la información está: "respuesta_encontrada": true. En "analisis_texto" incluye la respuesta completa citando nombre, número y fecha de cada fuente. Puedes usar markdown dentro del string.
 - Si la información NO está en ninguno de los bloques: "respuesta_encontrada": false. "analisis_texto" debe ser exactamente: "La información solicitada no se encuentra detallada en los documentos cargados para este análisis."
 - Nunca declares "no disponible" si el dato aparece textualmente en <NORMATIVA_OFICIAL_RECUPERADA> o <DOCUMENTOS_INTERNOS_CARGADOS>.
+- Las consultas conceptuales o de método ("cómo se calcula...", "qué es...", "cuál es la fórmula de...") DEBEN responderse con la fórmula, definición o procedimiento presente en el contexto, AUNQUE la pregunta use palabras como "exacto", "hoy" o "actual": la norma indexada es la fuente vigente válida. No te niegues por el adverbio; responde con lo que dice la ley en el contexto.
 - No menciones las etiquetas de los bloques en tu respuesta; son metadatos internos.
 - Prohibido: plazos, artículos o procedimientos no presentes textualmente en los documentos.
 - Prohibido: URLs o enlaces de cualquier tipo.
@@ -223,6 +233,9 @@ class RAGEngine:
         self.vector_store = vector_store
         self._anthropic_client: Optional[anthropic.Anthropic] = None
         self._async_anthropic_client: Optional[anthropic.AsyncAnthropic] = None
+        # SmartRouter (Ticket 002): clasifica intención y despacha modelo dinámico.
+        from backend.rag.smart_router import SmartRouter
+        self.router = SmartRouter(client_factory=self._get_async_anthropic_client)
 
     def _get_anthropic_client(self) -> anthropic.Anthropic:
         """Retorna el cliente sincrónico de Anthropic."""
@@ -246,16 +259,42 @@ class RAGEngine:
             self._async_anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         return self._async_anthropic_client
 
+    @staticmethod
+    def _extract_json_object(raw: str) -> str:
+        """
+        Aísla el primer objeto JSON balanceado del texto. Funciona con o sin prefill
+        y tolera fences markdown (```json ... ```) o prosa alrededor del objeto.
+        """
+        text = raw.strip()
+        # Quitar fences markdown si los hubiera
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+        if text.startswith("{"):
+            return text
+        start = text.find("{")
+        if start == -1:
+            # Sin llave de apertura: asumir prefill '{' omitido y anteponerla.
+            return "{" + text
+        # Buscar el cierre balanceado del primer objeto
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return text[start:]
+
     def _parse_llm_json(self, raw: str) -> tuple[bool, str]:
         """
-        Parsea la respuesta JSON del LLM (con prefill '{' ya incluido).
+        Parsea la respuesta JSON del LLM. Soporta respuestas con prefill ('{' ya
+        antepuesto por el caller) y sin prefill (objeto JSON completo en el cuerpo).
         Retorna (respuesta_encontrada, analisis_texto).
         En caso de fallo de parseo, retorna NOT_FOUND_RESPONSE de forma segura.
         """
         try:
-            text = raw.strip()
-            if not text.startswith("{"):
-                text = "{" + text
+            text = self._extract_json_object(raw)
             data = json.loads(text)
             found = bool(data.get("respuesta_encontrada", False))
             texto = str(data.get("analisis_texto", NOT_FOUND_RESPONSE)).strip()
@@ -892,18 +931,29 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         # a continuar completando un objeto JSON, eliminando libertad de formato.
         answer = ""
         selected_model = self._select_model(query)
+        _use_prefill = _supports_prefill(selected_model)
         try:
             client = self._get_async_anthropic_client()
             _t_llm = time.perf_counter()
+            _msgs = [*messages, {"role": "assistant", "content": "{"}] if _use_prefill else messages
             response = await client.messages.create(
                 model=selected_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
                 system=_ACTIVE_PROMPT,
-                messages=[*messages, {"role": "assistant", "content": "{"}],
+                messages=_msgs,
             )
+            _resp_text = response.content[0].text or ""
+            if _use_prefill and not _resp_text.strip():
+                # Prefill devolvió vacío → reintentar sin prefill (parse tolera fences).
+                response = await client.messages.create(
+                    model=selected_model, max_tokens=4096, temperature=LLM_TEMPERATURE,
+                    system=_ACTIVE_PROMPT, messages=messages,
+                )
+                raw_response = response.content[0].text or ""
+            else:
+                raw_response = ("{" + _resp_text) if _use_prefill else _resp_text
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
-            raw_response = "{" + response.content[0].text
             _, answer = self._parse_llm_json(raw_response)
             log_llm_call(
                 model=selected_model,
@@ -946,10 +996,13 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             except Exception as e:
                 logger.warning(f"Error guardando turno en memoria: {e}")
 
-        # No cachear respuestas con documentos internos: son específicas por usuario
-        if answer and not answer.startswith("Error:") and filter_collection == "all" and not has_internal_results:
+        # No cachear: errores, respuestas con docs internos, ni respuestas NOT_FOUND
+        # (cachear un "no encontrado" impediría responder al indexar normativa después).
+        if (answer and not answer.startswith("Error:") and answer != NOT_FOUND_RESPONSE
+                and filter_collection == "all" and not has_internal_results):
             try:
-                self.vector_store.cache_store(query, answer, sources, query_type)
+                # async: el embedding del cache no bloquea el event loop (Ticket 003)
+                await self.vector_store.acache_store(query, answer, sources, query_type)
             except Exception as e:
                 logger.warning(f"Error guardando en caché: {e}")
 
@@ -1255,11 +1308,21 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 logger.warning(f"[stream] Error recuperando historial: {e}")
                 return []
 
-        cached, history, (top_results, context_text, sources) = await asyncio.gather(
+        # SmartRouter (Ticket 002): la clasificación de intención corre EN PARALELO
+        # con la recuperación, de modo que no añade latencia perceptible al stream.
+        cached, history, (top_results, context_text, sources), route = await asyncio.gather(
             _cache(),
             _history(),
             asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id, document_id),
+            self.router.route(query, user_id),
         )
+
+        # Ruta COMPLEX: inyectar la metadata de documentos del usuario (PostgreSQL)
+        # al contexto para que Sonnet pueda razonar sobre el cruce relacional.
+        if route.get("pg_queried") and route.get("pg_documents"):
+            pg_ctx = self.router.format_pg_context(route["pg_documents"])
+            context_text = (context_text + "\n\n" + pg_ctx) if context_text else pg_ctx
+            yield _sse({"type": "stage", "text": f"Análisis cruzado: {len(route['pg_documents'])} documento(s) en rango..."})
 
         # Detectar documentos internos recuperados por título (distance=0.0)
         # También aplica cuando hay document_id activo
@@ -1268,8 +1331,11 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             for r in top_results
         )
 
-        # No usar caché para consultas con documentos internos
-        if cached and not has_internal_results:
+        # No usar caché para consultas con documentos internos NI para consultas
+        # COMPLEX (auditoría/análisis cruzado): dependen de datos del usuario en
+        # PostgreSQL y nunca deben servirse desde una respuesta cacheada de otra consulta.
+        _is_complex = route.get("intent") == "COMPLEX"
+        if cached and not has_internal_results and not _is_complex:
             logger.info("[stream] Cache hit — devolviendo respuesta cacheada")
             yield _sse({"type": "stage", "text": "Respuesta encontrada en caché..."})
             yield _sse({"type": "token", "text": cached["answer"]})
@@ -1298,19 +1364,40 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         # completo antes de emitirlo. El modelo no puede contaminar el formato
         # porque parseamos y extraemos solo analisis_texto antes de enviarlo al cliente.
         full_answer = ""
-        _stream_model = self._select_model(query)
+        # Modelo despachado por el SmartRouter (Ticket 002): Haiku para SIMPLE,
+        # Sonnet para COMPLEX. Si el router no resolvió, fallback al selector previo.
+        _stream_model = route.get("model") or self._select_model(query)
+        _use_prefill = _supports_prefill(_stream_model)
+        logger.info(f"[stream] Despacho: intent={route.get('intent')} modelo={_stream_model} prefill={_use_prefill}")
         try:
             client = self._get_async_anthropic_client()
             _t_llm = time.perf_counter()
+            # Prefill condicional: Sonnet 4.6 no soporta assistant message prefill.
+            _msgs = [*messages, {"role": "assistant", "content": "{"}] if _use_prefill else messages
             _response = await client.messages.create(
                 model=_stream_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
                 system=_ACTIVE_PROMPT,
-                messages=[*messages, {"role": "assistant", "content": "{"}],
+                messages=_msgs,
             )
+            _resp_text = _response.content[0].text or ""
+            if _use_prefill and not _resp_text.strip():
+                # El prefill produjo un completion vacío (ocurre con algunos modelos
+                # en inputs de contexto largo). Reintentar SIN prefill; _parse_llm_json
+                # tolera JSON con fences/prosa.
+                logger.info("[stream] Prefill devolvió vacío — reintentando sin prefill")
+                _response = await client.messages.create(
+                    model=_stream_model,
+                    max_tokens=4096,
+                    temperature=LLM_TEMPERATURE,
+                    system=_ACTIVE_PROMPT,
+                    messages=messages,
+                )
+                raw_json = _response.content[0].text or ""
+            else:
+                raw_json = ("{" + _resp_text) if _use_prefill else _resp_text
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
-            raw_json = "{" + _response.content[0].text
             _, full_answer = self._parse_llm_json(raw_json)
             log_llm_call(
                 model=_stream_model,
@@ -1353,10 +1440,14 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             except Exception as e:
                 logger.warning(f"[stream] Error guardando turno en memoria: {e}")
 
-        # No cachear respuestas con documentos internos
-        if full_answer and filter_collection == "all" and not has_internal_results:
+        # No cachear: respuestas con docs internos, consultas COMPLEX (datos del
+        # usuario), ni respuestas NOT_FOUND (cachear un "no encontrado" impediría
+        # responder una vez que la normativa se indexe después).
+        if (full_answer and full_answer != NOT_FOUND_RESPONSE
+                and filter_collection == "all" and not has_internal_results and not _is_complex):
             try:
-                self.vector_store.cache_store(query, full_answer, sources, query_type)
+                # async: el embedding del cache no bloquea el event loop (Ticket 003)
+                await self.vector_store.acache_store(query, full_answer, sources, query_type)
             except Exception as e:
                 logger.warning(f"[stream] Error guardando en caché: {e}")
 
