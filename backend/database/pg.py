@@ -22,8 +22,11 @@ POSTGRES_URL: str = os.getenv("POSTGRES_URL", "")
 # Reintentos al arrancar: cubre la race condition donde el contenedor de la app
 # levanta antes de que el DNS/servicio de postgres esté resoluble (común en
 # orquestadores como Coolify donde depends_on no siempre se honra).
-PG_INIT_RETRIES = int(os.getenv("PG_INIT_RETRIES", "8"))
+PG_INIT_RETRIES = int(os.getenv("PG_INIT_RETRIES", "5"))
 PG_INIT_DELAY_S = float(os.getenv("PG_INIT_DELAY_S", "3"))
+# Reconexión en segundo plano si postgres tarda en aparecer (no bloquea el arranque).
+PG_RECONNECT_INTERVAL_S = float(os.getenv("PG_RECONNECT_INTERVAL_S", "15"))
+PG_BACKGROUND_MAX_TRIES = int(os.getenv("PG_BACKGROUND_MAX_TRIES", "40"))  # ~10 min
 
 _pool = None        # asyncpg.Pool una vez inicializado
 
@@ -40,38 +43,67 @@ async def init_pool() -> None:
     Inicializa el pool de conexiones asyncpg y aplica las migraciones DDL.
     Llamar desde el lifespan de FastAPI. No lanza excepción si PG no está disponible.
     """
-    global _pool
     if not POSTGRES_URL:
         logger.info("POSTGRES_URL no configurado — PostgreSQL desactivado (modo ChromaDB solo)")
         return
 
-    import asyncpg
-    last_err = None
+    # Intentos iniciales (bloqueantes, breve): cubren el caso normal.
     for attempt in range(1, PG_INIT_RETRIES + 1):
         try:
-            _pool = await asyncpg.create_pool(
-                POSTGRES_URL,
-                min_size=2,
-                max_size=10,
-                command_timeout=10,
-            )
-            await _run_migrations()
+            await _connect_once()
             logger.info(f"PostgreSQL pool inicializado correctamente (intento {attempt})")
             return
         except Exception as e:
-            last_err = e
-            _pool = None
-            logger.warning(
-                f"PostgreSQL no disponible (intento {attempt}/{PG_INIT_RETRIES}): {e}"
-            )
+            logger.warning(f"PostgreSQL no disponible (intento {attempt}/{PG_INIT_RETRIES}): {e}")
             if attempt < PG_INIT_RETRIES:
                 await asyncio.sleep(PG_INIT_DELAY_S)
 
+    # Si no conectó al arranque (postgres tarda en quedar resoluble en Coolify),
+    # seguir reintentando en SEGUNDO PLANO sin bloquear el arranque del app.
     logger.error(
-        f"Error inicializando PostgreSQL tras {PG_INIT_RETRIES} intentos: "
-        f"{last_err} — continuando sin PG"
+        f"PostgreSQL no disponible tras {PG_INIT_RETRIES} intentos iniciales — "
+        f"reintentando en segundo plano cada {PG_RECONNECT_INTERVAL_S}s"
     )
-    _pool = None
+    asyncio.create_task(_background_reconnect())
+
+
+async def _connect_once() -> None:
+    """Crea el pool y aplica migraciones. Lanza excepción si falla."""
+    global _pool
+    import asyncpg
+    _pool = await asyncpg.create_pool(
+        POSTGRES_URL,
+        min_size=2,
+        max_size=10,
+        command_timeout=10,
+    )
+    try:
+        await _run_migrations()
+    except Exception:
+        # Si las migraciones fallan, no dejar un pool a medias.
+        await _pool.close()
+        _pool = None
+        raise
+
+
+async def _background_reconnect() -> None:
+    """
+    Reintenta conectar a PostgreSQL en segundo plano hasta que postgres esté
+    disponible (apenas Coolify lo registra en la red). Se detiene al conectar.
+    """
+    for attempt in range(1, PG_BACKGROUND_MAX_TRIES + 1):
+        await asyncio.sleep(PG_RECONNECT_INTERVAL_S)
+        if _pool is not None:
+            return
+        try:
+            await _connect_once()
+            logger.info(f"PostgreSQL conectado en segundo plano (intento background {attempt})")
+            return
+        except Exception as e:
+            logger.warning(
+                f"PostgreSQL aún no disponible (background {attempt}/{PG_BACKGROUND_MAX_TRIES}): {e}"
+            )
+    logger.error("PostgreSQL no se pudo conectar tras los reintentos en segundo plano — operando solo con ChromaDB")
 
 
 async def close_pool() -> None:
