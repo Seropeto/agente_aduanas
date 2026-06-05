@@ -9,18 +9,20 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentia_dev_pass}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - agentia_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agentia -d agentia_db"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
-    
+
 
   agentia:
     build: .
     restart: unless-stopped
-    
+
     environment:
       LOG_FORMAT: "json"
       LOG_LEVEL: "INFO"
@@ -31,6 +33,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - agentia_net
     volumes:
       - chroma_data:/app/data/chroma_db
       - uploads_data:/app/data/uploads
@@ -50,3 +54,11 @@ volumes:
   uploads_data:
   logs_data:
   postgres_data:
+
+# Red compartida con nombre FIJO: garantiza que postgres y agentia queden en la
+# misma red en cada redeploy de Coolify (evita que el agentia nuevo arranque en
+# una red distinta a postgres y no lo resuelva por DNS).
+networks:
+  agentia_net:
+    name: agentia_net
+    driver: bridge
