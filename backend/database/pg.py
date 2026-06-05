@@ -10,6 +10,7 @@ Activación automática: si POSTGRES_URL está en el entorno, se activa el pool.
 Si no está configurado, is_pg_enabled() devuelve False y las operaciones son no-ops.
 Esto permite operar sin PostgreSQL en desarrollo o como fallback.
 """
+import asyncio
 import logging
 import os
 from typing import Any
@@ -17,6 +18,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 POSTGRES_URL: str = os.getenv("POSTGRES_URL", "")
+
+# Reintentos al arrancar: cubre la race condition donde el contenedor de la app
+# levanta antes de que el DNS/servicio de postgres esté resoluble (común en
+# orquestadores como Coolify donde depends_on no siempre se honra).
+PG_INIT_RETRIES = int(os.getenv("PG_INIT_RETRIES", "8"))
+PG_INIT_DELAY_S = float(os.getenv("PG_INIT_DELAY_S", "3"))
 
 _pool = None        # asyncpg.Pool una vez inicializado
 
@@ -37,19 +44,34 @@ async def init_pool() -> None:
     if not POSTGRES_URL:
         logger.info("POSTGRES_URL no configurado — PostgreSQL desactivado (modo ChromaDB solo)")
         return
-    try:
-        import asyncpg
-        _pool = await asyncpg.create_pool(
-            POSTGRES_URL,
-            min_size=2,
-            max_size=10,
-            command_timeout=10,
-        )
-        await _run_migrations()
-        logger.info("PostgreSQL pool inicializado correctamente")
-    except Exception as e:
-        logger.error(f"Error inicializando PostgreSQL: {e} — continuando sin PG")
-        _pool = None
+
+    import asyncpg
+    last_err = None
+    for attempt in range(1, PG_INIT_RETRIES + 1):
+        try:
+            _pool = await asyncpg.create_pool(
+                POSTGRES_URL,
+                min_size=2,
+                max_size=10,
+                command_timeout=10,
+            )
+            await _run_migrations()
+            logger.info(f"PostgreSQL pool inicializado correctamente (intento {attempt})")
+            return
+        except Exception as e:
+            last_err = e
+            _pool = None
+            logger.warning(
+                f"PostgreSQL no disponible (intento {attempt}/{PG_INIT_RETRIES}): {e}"
+            )
+            if attempt < PG_INIT_RETRIES:
+                await asyncio.sleep(PG_INIT_DELAY_S)
+
+    logger.error(
+        f"Error inicializando PostgreSQL tras {PG_INIT_RETRIES} intentos: "
+        f"{last_err} — continuando sin PG"
+    )
+    _pool = None
 
 
 async def close_pool() -> None:
