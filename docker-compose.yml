@@ -35,6 +35,8 @@ services:
       - chroma_data:/app/data/chroma_db
       - uploads_data:/app/data/uploads
       - logs_data:/app/data/logs
+    expose:
+      - "8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
