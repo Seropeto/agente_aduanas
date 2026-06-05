@@ -28,7 +28,13 @@ services:
       LOG_LEVEL: "INFO"
       ENVIRONMENT: "production"
       SERVICE_NAME: "agentia-aduanas"
-      POSTGRES_URL: "postgresql://agentia:${POSTGRES_PASSWORD:-agentia_dev_pass}@postgres:5432/agentia_db"
+      # Parámetros discretos de PostgreSQL (robustos ante '@' u otros caracteres
+      # especiales en la contraseña; evita la URL mal formada por interpolación).
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB:   "agentia_db"
+      POSTGRES_USER: "agentia"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentia_dev_pass}
       # SENTRY_DSN e SENTRY_TRACES_RATE se inyectan desde Coolify/Dokploy secrets
     depends_on:
       postgres:

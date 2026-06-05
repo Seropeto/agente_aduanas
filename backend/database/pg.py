@@ -19,6 +19,22 @@ logger = logging.getLogger(__name__)
 
 POSTGRES_URL: str = os.getenv("POSTGRES_URL", "")
 
+# Parámetros discretos (PREFERIDOS): evitan problemas de URL-encoding cuando la
+# contraseña contiene caracteres especiales como '@', ':' o '/'. Si POSTGRES_HOST
+# está definido, se conecta con estos parámetros y se IGNORA POSTGRES_URL (que
+# podría venir mal armada por interpolación de una password con '@').
+PG_HOST: str = os.getenv("POSTGRES_HOST", "")
+PG_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
+PG_DB: str = os.getenv("POSTGRES_DB", "agentia_db")
+PG_USER: str = os.getenv("POSTGRES_USER", "agentia")
+PG_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
+
+
+def _pg_configured() -> bool:
+    """True si hay configuración suficiente para intentar conectar a PostgreSQL."""
+    return bool(PG_HOST or POSTGRES_URL)
+
+
 # Reintentos al arrancar: cubre la race condition donde el contenedor de la app
 # levanta antes de que el DNS/servicio de postgres esté resoluble (común en
 # orquestadores como Coolify donde depends_on no siempre se honra).
@@ -43,8 +59,8 @@ async def init_pool() -> None:
     Inicializa el pool de conexiones asyncpg y aplica las migraciones DDL.
     Llamar desde el lifespan de FastAPI. No lanza excepción si PG no está disponible.
     """
-    if not POSTGRES_URL:
-        logger.info("POSTGRES_URL no configurado — PostgreSQL desactivado (modo ChromaDB solo)")
+    if not _pg_configured():
+        logger.info("PostgreSQL no configurado (sin POSTGRES_HOST ni POSTGRES_URL) — modo ChromaDB solo")
         return
 
     # Intentos iniciales (bloqueantes, breve): cubren el caso normal.
@@ -68,15 +84,32 @@ async def init_pool() -> None:
 
 
 async def _connect_once() -> None:
-    """Crea el pool y aplica migraciones. Lanza excepción si falla."""
+    """Crea el pool y aplica migraciones. Lanza excepción si falla.
+
+    Prefiere parámetros discretos (host/user/password/db) — robustos ante
+    contraseñas con caracteres especiales (@, :, /). Solo usa POSTGRES_URL si no
+    hay POSTGRES_HOST configurado.
+    """
     global _pool
     import asyncpg
-    _pool = await asyncpg.create_pool(
-        POSTGRES_URL,
-        min_size=2,
-        max_size=10,
-        command_timeout=10,
-    )
+    if PG_HOST:
+        _pool = await asyncpg.create_pool(
+            host=PG_HOST,
+            port=PG_PORT,
+            database=PG_DB,
+            user=PG_USER,
+            password=PG_PASSWORD,
+            min_size=2,
+            max_size=10,
+            command_timeout=10,
+        )
+    else:
+        _pool = await asyncpg.create_pool(
+            POSTGRES_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=10,
+        )
     try:
         await _run_migrations()
     except Exception:
