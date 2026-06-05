@@ -589,11 +589,11 @@ async def delete_document(doc_id: str):
         raise HTTPException(status_code=400, detail="doc_id inválido")
 
     try:
-        # Obtener info del documento antes de eliminar
-        docs = vector_store.list_documents(COLLECTION_INTERNOS)
+        # Obtener info del documento antes de eliminar (en hilo: no bloquea el loop)
+        docs = await asyncio.to_thread(vector_store.list_documents, COLLECTION_INTERNOS)
         doc_info = next((d for d in docs if d["doc_id"] == doc_id), None)
 
-        deleted = vector_store.delete_document(doc_id, COLLECTION_INTERNOS)
+        deleted = await asyncio.to_thread(vector_store.delete_document, doc_id, COLLECTION_INTERNOS)
 
         if not deleted:
             raise HTTPException(
@@ -612,7 +612,7 @@ async def delete_document(doc_id: str):
         # el documento eliminado y quedarían obsoletas
         try:
             from backend.indexer.vectorstore import COLLECTION_CACHE
-            vector_store.clear_collection(COLLECTION_CACHE)
+            await asyncio.to_thread(vector_store.clear_collection, COLLECTION_CACHE)
             logger.info(f"Caché semántica vaciada tras eliminar documento {doc_id}")
         except Exception as e:
             logger.warning(f"No se pudo vaciar caché tras eliminar documento: {e}")
@@ -731,7 +731,7 @@ async def reset_normativa():
             detail="El scraper ya está en ejecución. Espere a que termine.",
         )
     try:
-        vector_store.clear_collection(COLLECTION_NORMATIVA)
+        await asyncio.to_thread(vector_store.clear_collection, COLLECTION_NORMATIVA)
         logger.info("Colección normativa_aduanera limpiada")
     except Exception as e:
         logger.error(f"Error limpiando colección: {e}")
@@ -782,7 +782,8 @@ async def clear_semantic_cache(current_user: dict = Depends(get_current_user)):
     """Vacía la caché semántica de respuestas. Útil tras re-indexar documentos."""
     from backend.indexer.vectorstore import COLLECTION_CACHE
     try:
-        vector_store.clear_collection(COLLECTION_CACHE)
+        # En hilo: las operaciones de ChromaDB (SQLite) no deben bloquear el event loop.
+        await asyncio.to_thread(vector_store.clear_collection, COLLECTION_CACHE)
         logger.info(f"Caché semántica vaciada por {current_user.get('email')}")
         return {"message": "Caché semántica vaciada correctamente.", "status": "ok"}
     except Exception as e:
