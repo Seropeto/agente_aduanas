@@ -1,673 +1,283 @@
 """
-Módulo de almacenamiento vectorial usando ChromaDB.
-Gestiona tres colecciones:
-  - normativa_aduanera: documentos scrapeados de fuentes oficiales
-  - documentos_internos: documentos subidos por el usuario
-  - cache_consultas: caché semántica de respuestas generadas
+Almacenamiento vectorial unificado sobre PostgreSQL + pgvector.
+
+Reemplaza por completo a ChromaDB. Todo el conocimiento (normativa, documentos
+internos del usuario y caché semántica) vive en PostgreSQL:
+
+  - normativa_aduanera  → agentia_knowledge_chunks (domain='normative')
+  - documentos_internos → agentia_knowledge_chunks (domain='internal')
+  - cache_consultas     → agentia_semantic_cache
+
+Los embeddings se generan con OpenAI (text-embedding-3-small, 1536 dims) de forma
+asíncrona. Todos los métodos de I/O son async-native (no usan hilos): el pool de
+asyncpg vive en el event loop principal, por lo que el retrieval corre directo
+sobre el loop sin el salto a `to_thread` que requería ChromaDB/SentenceTransformer.
+
+Las constantes COLLECTION_* se conservan como etiquetas lógicas para no romper a
+los llamadores; internamente mapean a un `domain` de la tabla unificada.
 """
-import asyncio
 import hashlib
 import json
 import logging
-import time
 from typing import Any, Optional
 
-import chromadb
-from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
-
-from backend.config import CHROMA_DIR, EMBEDDING_MODEL
-from backend.telemetry import trace_vector_search
+from backend.embeddings import embed_query, embed_texts, is_embeddings_enabled
+from backend.database import (
+    insert_knowledge_chunks, search_chunks_hybrid, search_chunks_by_title,
+    delete_chunks_by_meta, chunks_meta_exists, count_chunks_by_domain,
+    clear_chunks_by_domain, list_internal_documents,
+    cache_lookup_pg, cache_store_pg, clear_semantic_cache_pg, is_pg_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
+# Etiquetas lógicas (compatibilidad con los llamadores) → dominio en la tabla unificada.
 COLLECTION_NORMATIVA = "normativa_aduanera"
 COLLECTION_INTERNOS = "documentos_internos"
 COLLECTION_CACHE = "cache_consultas"
 
-CACHE_DISTANCE_THRESHOLD = 0.05   # similitud coseno ≥ 0.95 (estricto: evita
-                                  # falsos positivos semánticos entre consultas distintas)
-CACHE_TTL_HOURS = 24              # tiempo de vida de entradas de caché
+_COLLECTION_TO_DOMAIN = {
+    COLLECTION_NORMATIVA: "normative",
+    COLLECTION_INTERNOS: "internal",
+}
+_DOMAIN_TO_COLLECTION = {v: k for k, v in _COLLECTION_TO_DOMAIN.items()}
+
+CACHE_DISTANCE_THRESHOLD = 0.05   # similitud coseno ≥ 0.95 (estricto)
+CACHE_TTL_HOURS = 24
+
+
+def _domain(collection_name: str) -> str:
+    try:
+        return _COLLECTION_TO_DOMAIN[collection_name]
+    except KeyError:
+        raise ValueError(f"Colección desconocida: {collection_name}")
+
+
+def _as_dict(metadata: Any) -> dict:
+    """asyncpg puede devolver JSONB como str — normaliza a dict."""
+    if isinstance(metadata, str):
+        try:
+            return json.loads(metadata)
+        except json.JSONDecodeError:
+            return {}
+    return metadata or {}
+
+
+def _map_row(row: dict, distance_override: float | None = None) -> dict:
+    """Normaliza una fila de agentia_knowledge_chunks al formato que espera el engine."""
+    distance = distance_override if distance_override is not None else float(row.get("distance", 1.0))
+    domain = row.get("domain")
+    return {
+        "text": row.get("content", ""),
+        "metadata": _as_dict(row.get("metadata")),
+        "distance": distance,
+        "collection": _DOMAIN_TO_COLLECTION.get(domain, domain),
+        "relevance_score": 1.0 - distance,
+    }
 
 
 class VectorStore:
-    """
-    Interfaz de alto nivel para ChromaDB.
-    Gestiona embeddings, almacenamiento y búsqueda de documentos.
-    """
+    """Interfaz de alto nivel sobre PostgreSQL + pgvector (async-native)."""
 
     def __init__(self):
-        self._client: Optional[chromadb.PersistentClient] = None
-        self._embedding_model: Optional[SentenceTransformer] = None
-        self._collection_normativa = None
-        self._collection_internos = None
-        self._collection_cache = None
         self._initialized = False
 
+    # ------------------------------------------------------------------ #
+    # Ciclo de vida (no-op: el pool lo gestiona backend.database.init_pool) #
+    # ------------------------------------------------------------------ #
     def initialize(self):
-        """Inicializa ChromaDB y el modelo de embeddings."""
-        if self._initialized:
-            return
-
-        logger.info("Inicializando ChromaDB...")
-        try:
-            self._client = chromadb.PersistentClient(
-                path=str(CHROMA_DIR),
-                settings=Settings(anonymized_telemetry=False),
-            )
-
-            # Crear/obtener colecciones
-            self._collection_normativa = self._client.get_or_create_collection(
-                name=COLLECTION_NORMATIVA,
-                metadata={
-                    "description": "Normativa oficial aduanera chilena",
-                    "hnsw:space": "cosine",
-                },
-            )
-
-            self._collection_internos = self._client.get_or_create_collection(
-                name=COLLECTION_INTERNOS,
-                metadata={
-                    "description": "Documentos internos subidos por el usuario",
-                    "hnsw:space": "cosine",
-                },
-            )
-
-            self._collection_cache = self._client.get_or_create_collection(
-                name=COLLECTION_CACHE,
-                metadata={
-                    "description": "Caché semántica de respuestas generadas",
-                    "hnsw:space": "cosine",
-                },
-            )
-
-            logger.info("ChromaDB inicializado correctamente")
-        except Exception as e:
-            logger.error(f"Error inicializando ChromaDB: {e}")
-            raise
-
-        logger.info(f"Cargando modelo de embeddings: {EMBEDDING_MODEL}")
-        try:
-            self._embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-            logger.info("Modelo de embeddings cargado")
-        except Exception as e:
-            logger.error(f"Error cargando modelo de embeddings: {e}")
-            raise
-
+        """Compatibilidad. El pool de PostgreSQL se inicializa en el lifespan
+        de FastAPI vía init_pool(); aquí no hay estado propio que arrancar."""
         self._initialized = True
+        logger.info("VectorStore (pgvector) listo — backend único PostgreSQL")
 
-    def _ensure_initialized(self):
-        """Asegura que el store esté inicializado."""
-        if not self._initialized:
-            self.initialize()
+    def close(self):
+        logger.info("VectorStore cerrado")
 
-    def _get_collection(self, collection_name: str):
-        """Retorna la colección especificada."""
-        if collection_name == COLLECTION_NORMATIVA:
-            return self._collection_normativa
-        elif collection_name == COLLECTION_INTERNOS:
-            return self._collection_internos
-        elif collection_name == COLLECTION_CACHE:
-            return self._collection_cache
-        else:
-            raise ValueError(f"Colección desconocida: {collection_name}")
-
-    def _embed(self, texts: list[str]) -> list[list[float]]:
-        """Genera embeddings para una lista de textos (SÍNCRONO, bloquea CPU).
-
-        Uso interno y desde contextos que ya corren en un hilo (run_in_executor /
-        to_thread / scheduler). NO llamar directamente desde el event loop async:
-        usar aembed() en su lugar.
-        """
+    # ------------------------------------------------------------------ #
+    # Embeddings (OpenAI)                                                  #
+    # ------------------------------------------------------------------ #
+    async def _aembed_one(self, text: str) -> list[float] | None:
+        if not is_embeddings_enabled():
+            logger.warning("OPENAI_API_KEY no configurada — embeddings deshabilitados")
+            return None
         try:
-            embeddings = self._embedding_model.encode(texts, show_progress_bar=False)
-            return embeddings.tolist()
+            return await embed_query(text)
         except Exception as e:
-            logger.error(f"Error generando embeddings: {e}")
-            raise
-
-    async def aembed(self, texts: list[str]) -> list[list[float]]:
-        """
-        Versión ASÍNCRONA de _embed (Ticket 003).
-
-        Delega el cálculo pesado de CPU (model.encode) al pool de hilos por defecto
-        del event loop, de modo que FastAPI nunca se congela durante la vectorización.
-        SentenceTransformer/PyTorch liberan el GIL durante el cómputo, por lo que el
-        event loop sigue despachando solicitudes concurrentes (chat streaming, etc.).
-        """
-        self._ensure_initialized()
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._embed, texts)
-
-    def _generate_chunk_id(self, doc_id: str, chunk_index: int) -> str:
-        """Genera un ID único para un chunk."""
-        return f"{doc_id}_{chunk_index}"
+            logger.error(f"Error generando embedding de consulta: {e}")
+            return None
 
     # ------------------------------------------------------------------ #
-    # Inserción de documentos                                              #
+    # Inserción                                                            #
     # ------------------------------------------------------------------ #
-
-    def add_documents(
-        self,
-        chunks: list[dict[str, Any]],
-        collection_name: str = COLLECTION_NORMATIVA,
+    async def aadd_documents(
+        self, chunks: list[dict[str, Any]], collection_name: str = COLLECTION_NORMATIVA,
     ) -> int:
-        """
-        Agrega chunks de documentos a la colección especificada.
-
-        Args:
-            chunks: Lista de dicts con 'text' y 'metadata'.
-            collection_name: Nombre de la colección destino.
-
-        Returns:
-            Número de chunks insertados exitosamente.
-        """
-        self._ensure_initialized()
+        """Embebe (OpenAI) e inserta chunks en el dominio correspondiente."""
         if not chunks:
             return 0
+        if not is_embeddings_enabled():
+            logger.error("No se puede indexar: OPENAI_API_KEY no configurada")
+            return 0
+        domain = _domain(collection_name)
 
-        collection = self._get_collection(collection_name)
-        inserted = 0
-
-        # Procesar en lotes para no saturar la memoria
-        batch_size = 50
-        for batch_start in range(0, len(chunks), batch_size):
-            batch = chunks[batch_start : batch_start + batch_size]
-
-            ids = []
-            texts = []
-            metadatas = []
-
-            for chunk in batch:
-                text = chunk.get("text", "").strip()
-                meta = chunk.get("metadata", {})
-
-                if not text:
-                    continue
-
-                doc_id = meta.get("doc_id", hashlib.sha256(text.encode()).hexdigest()[:16])
-                chunk_idx = meta.get("chunk_index", 0)
-                chunk_id = self._generate_chunk_id(doc_id, chunk_idx)
-
-                # ChromaDB requiere que los valores de metadata sean str/int/float/bool
-                clean_meta = {
-                    k: str(v) if not isinstance(v, (str, int, float, bool)) else v
-                    for k, v in meta.items()
-                    if v is not None
-                }
-                clean_meta.setdefault("source", "desconocido")
-                clean_meta.setdefault("title", "Sin título")
-                clean_meta.setdefault("date", "")
-                clean_meta.setdefault("url", "")
-                clean_meta.setdefault("content_type", "normativa")
-                clean_meta.setdefault("doc_id", doc_id)
-
-                ids.append(chunk_id)
-                texts.append(text)
-                metadatas.append(clean_meta)
-
-            if not ids:
+        prepared, texts = [], []
+        for chunk in chunks:
+            text = (chunk.get("text") or "").strip()
+            if not text:
                 continue
+            meta = dict(chunk.get("metadata", {}))
+            doc_id = meta.get("doc_id") or hashlib.sha256(text.encode()).hexdigest()[:16]
+            meta.setdefault("doc_id", doc_id)
+            meta.setdefault("source", "desconocido")
+            meta.setdefault("title", "Sin título")
+            meta.setdefault("date", "")
+            meta.setdefault("url", "")
+            meta.setdefault("content_type", "normativa" if domain == "normative" else "documento")
+            prepared.append(meta)
+            texts.append(text)
 
-            try:
-                embeddings = self._embed(texts)
-                collection.upsert(
-                    ids=ids,
-                    embeddings=embeddings,
-                    documents=texts,
-                    metadatas=metadatas,
-                )
-                inserted += len(ids)
-            except Exception as e:
-                logger.error(f"Error insertando batch en {collection_name}: {e}")
+        if not texts:
+            return 0
 
-        logger.info(f"Insertados {inserted} chunks en '{collection_name}'")
+        try:
+            embeddings = await embed_texts(texts)
+        except Exception as e:
+            logger.error(f"Error generando embeddings para indexar: {e}")
+            return 0
+
+        records = [
+            {"content": texts[i], "embedding": embeddings[i], "metadata": prepared[i]}
+            for i in range(len(texts))
+        ]
+        inserted = await insert_knowledge_chunks(records, domain)
+        logger.info(f"Insertados {inserted} chunks en dominio '{domain}'")
         return inserted
 
     # ------------------------------------------------------------------ #
     # Búsqueda                                                             #
     # ------------------------------------------------------------------ #
-
-    def search(
-        self,
-        query: str,
-        collection_name: str | None = None,
-        top_k: int = 3,
-        filter_metadata: dict | None = None,
+    async def asearch(
+        self, query: str, collection_name: str | None = None,
+        top_k: int = 3, filter_metadata: dict | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Busca documentos relevantes para la consulta dada.
-
-        Args:
-            query: Texto de la consulta.
-            collection_name: Si es None, busca en ambas colecciones.
-            top_k: Número máximo de resultados por colección.
-            filter_metadata: Filtros de metadata (ChromaDB where clause).
-
-        Returns:
-            Lista de resultados con 'text', 'metadata', 'distance', 'collection'.
-        """
-        self._ensure_initialized()
-
-        if not query.strip():
+        """Búsqueda semántica (coseno) en uno o ambos dominios."""
+        if not query.strip() or not is_pg_enabled():
+            return []
+        embedding = await self._aembed_one(query)
+        if embedding is None:
             return []
 
-        results = []
-
-        collections_to_search = []
-        if collection_name == COLLECTION_NORMATIVA:
-            collections_to_search = [COLLECTION_NORMATIVA]
-        elif collection_name == COLLECTION_INTERNOS:
-            collections_to_search = [COLLECTION_INTERNOS]
+        if collection_name in (COLLECTION_NORMATIVA, COLLECTION_INTERNOS):
+            domains = [_domain(collection_name)]
         else:
-            collections_to_search = [COLLECTION_NORMATIVA, COLLECTION_INTERNOS]
+            domains = ["normative", "internal"]
 
-        try:
-            query_embedding = self._embed([query])[0]
-        except Exception as e:
-            logger.error(f"Error generando embedding de consulta: {e}")
-            return []
-
-        for coll_name in collections_to_search:
+        results: list[dict] = []
+        for domain in domains:
             try:
-                collection = self._get_collection(coll_name)
-
-                # Verificar que la colección tenga documentos
-                count = collection.count()
-                if count == 0:
-                    continue
-
-                query_params = {
-                    "query_embeddings": [query_embedding],
-                    "n_results": min(top_k, count),
-                    "include": ["documents", "metadatas", "distances"],
-                }
-                if filter_metadata:
-                    query_params["where"] = filter_metadata
-
-                with trace_vector_search(collection=coll_name, top_k=top_k):
-                    response = collection.query(**query_params)
-
-                if not response or not response.get("ids"):
-                    continue
-
-                ids = response["ids"][0]
-                docs = response["documents"][0]
-                metas = response["metadatas"][0]
-                distances = response["distances"][0]
-
-                for i, doc_id in enumerate(ids):
-                    results.append({
-                        "text": docs[i],
-                        "metadata": metas[i],
-                        "distance": distances[i],
-                        "collection": coll_name,
-                        "relevance_score": 1.0 - distances[i],  # cosine: 0=identical
-                    })
-
+                rows = await search_chunks_hybrid(
+                    query_embedding=embedding, domain=domain,
+                    metadata_filter=filter_metadata, top_k=top_k,
+                )
+                results.extend(_map_row(r) for r in rows)
             except Exception as e:
-                logger.error(f"Error buscando en colección '{coll_name}': {e}")
+                logger.error(f"Error buscando en dominio '{domain}': {e}")
 
-        # Ordenar por relevancia (menor distancia = más relevante)
         results.sort(key=lambda x: x["distance"])
-
         return results
 
-    def get_chunks_by_title_fragment(
-        self,
-        title_fragment: str,
-        collection_name: str = COLLECTION_INTERNOS,
+    async def aget_chunks_by_title_fragment(
+        self, title_fragment: str, collection_name: str = COLLECTION_INTERNOS,
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Devuelve los chunks cuyo título o filename contenga el fragmento dado.
-        Usa filtrado client-side porque ChromaDB no soporta $contains en metadata.
-        Si se proporciona user_id, solo devuelve documentos de ese usuario.
-        """
-        self._ensure_initialized()
-        collection = self._get_collection(collection_name)
-
+        """Devuelve chunks cuyo título/filename contenga el fragmento (ILIKE en JSONB)."""
+        if not is_pg_enabled():
+            return []
+        domain = _domain(collection_name)
         try:
-            count = collection.count()
-            if count == 0:
-                return []
-
-            results = collection.get(
-                limit=min(count, 10000),
-                include=["documents", "metadatas"],
-            )
-
-            if not results or not results.get("ids"):
-                return []
-
-            fragment = title_fragment.lower()
-            # Palabras significativas del fragmento (≥3 chars) para matching flexible
-            frag_words = [w for w in fragment.split() if len(w) >= 3]
-
-            logger.debug(
-                f"[title_search] fragment='{fragment}' words={frag_words} "
-                f"user_id={user_id!r} total_chunks={len(results['metadatas'])}"
-            )
-
-            matched = []
-            for i, meta in enumerate(results["metadatas"]):
-                stored_uid = meta.get("user_id")
-                title    = meta.get("title", "").lower()
-                filename = meta.get("filename", "").lower()
-
-                # Filtrar por usuario si se proporciona
-                if user_id and stored_uid and stored_uid != user_id:
-                    continue
-
-                # Tier 1: coincidencia exacta de substring
-                exact = fragment in title or fragment in filename
-                # Tier 2: todas las palabras del fragmento aparecen en título o filename
-                word_match = bool(frag_words) and all(
-                    w in title or w in filename for w in frag_words
-                )
-
-                if exact or word_match:
-                    matched.append({
-                        "text":            results["documents"][i],
-                        "metadata":        meta,
-                        "distance":        0.0,
-                        "collection":      collection_name,
-                        "relevance_score": 1.0,
-                    })
-
-            return matched
-
+            rows = await search_chunks_by_title(title_fragment, domain, user_id=user_id)
         except Exception as e:
             logger.error(f"Error en búsqueda por título '{title_fragment}': {e}")
             return []
+        return [_map_row(r, distance_override=0.0) for r in rows]
 
     # ------------------------------------------------------------------ #
-    # Eliminación                                                          #
+    # Eliminación / utilidades                                            #
     # ------------------------------------------------------------------ #
+    async def adelete_document(self, doc_id: str, collection_name: str | None = None) -> bool:
+        """Elimina todos los chunks de un documento por su doc_id."""
+        domain = _domain(collection_name) if collection_name else None
+        deleted = await delete_chunks_by_meta("doc_id", doc_id, domain)
+        if deleted:
+            logger.info(f"Eliminados {deleted} chunks del doc '{doc_id}'")
+        return deleted > 0
 
-    def clear_collection(self, collection_name: str) -> None:
-        """Elimina y recrea una colección completa (limpieza total)."""
-        self._ensure_initialized()
-        try:
-            self._client.delete_collection(collection_name)
-            logger.info(f"Colección '{collection_name}' eliminada")
-        except Exception as e:
-            logger.warning(f"No se pudo eliminar colección '{collection_name}': {e}")
-        # Recrear vacía con los mismos parámetros
-        new_col = self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
-        if collection_name == COLLECTION_NORMATIVA:
-            self._collection_normativa = new_col
-        elif collection_name == COLLECTION_INTERNOS:
-            self._collection_internos = new_col
-        logger.info(f"Colección '{collection_name}' recreada vacía")
+    async def aclear_collection(self, collection_name: str) -> None:
+        """Vacía una colección lógica (dominio de chunks o la caché)."""
+        if collection_name == COLLECTION_CACHE:
+            n = await clear_semantic_cache_pg()
+            logger.info(f"Caché semántica vaciada ({n} entradas)")
+            return
+        domain = _domain(collection_name)
+        n = await clear_chunks_by_domain(domain)
+        logger.info(f"Dominio '{domain}' vaciado ({n} chunks)")
 
-    def delete_document(self, doc_id: str, collection_name: str | None = None) -> bool:
-        """
-        Elimina todos los chunks de un documento por su doc_id.
-
-        Args:
-            doc_id: ID del documento a eliminar.
-            collection_name: Colección donde buscar. Si None, busca en ambas.
-
-        Returns:
-            True si se eliminó al menos un chunk.
-        """
-        self._ensure_initialized()
-
-        collections_to_check = []
-        if collection_name:
-            collections_to_check = [collection_name]
-        else:
-            collections_to_check = [COLLECTION_NORMATIVA, COLLECTION_INTERNOS]
-
-        deleted_any = False
-
-        for coll_name in collections_to_check:
-            try:
-                collection = self._get_collection(coll_name)
-
-                # Obtener IDs de chunks que corresponden al doc_id
-                results = collection.get(
-                    where={"doc_id": doc_id},
-                    include=["metadatas"],
-                )
-
-                if results and results.get("ids"):
-                    chunk_ids = results["ids"]
-                    collection.delete(ids=chunk_ids)
-                    logger.info(
-                        f"Eliminados {len(chunk_ids)} chunks del doc '{doc_id}' en '{coll_name}'"
-                    )
-                    deleted_any = True
-            except Exception as e:
-                logger.error(f"Error eliminando doc '{doc_id}' de '{coll_name}': {e}")
-
-        return deleted_any
-
-    # ------------------------------------------------------------------ #
-    # Estadísticas y utilidades                                           #
-    # ------------------------------------------------------------------ #
-
-    def get_stats(self) -> dict[str, Any]:
-        """Retorna estadísticas de las colecciones."""
-        self._ensure_initialized()
-        try:
-            return {
-                COLLECTION_NORMATIVA: self._collection_normativa.count(),
-                COLLECTION_INTERNOS: self._collection_internos.count(),
-                "total": (
-                    self._collection_normativa.count()
-                    + self._collection_internos.count()
-                ),
-            }
-        except Exception as e:
-            logger.error(f"Error obteniendo estadísticas: {e}")
-            return {COLLECTION_NORMATIVA: 0, COLLECTION_INTERNOS: 0, "total": 0}
-
-    def is_document_indexed(
-        self,
-        identifier: str,
-        id_type: str = "url",
-        collection_name: str | None = None,
+    async def ais_document_indexed(
+        self, identifier: str, id_type: str = "url", collection_name: str | None = None,
     ) -> bool:
-        """
-        Verifica si un documento ya está indexado.
+        """Verifica si un documento ya está indexado (por url o doc_id en metadata)."""
+        domain = _domain(collection_name) if collection_name else None
+        return await chunks_meta_exists(id_type, identifier, domain)
 
-        Args:
-            identifier: URL o hash del archivo a verificar.
-            id_type: 'url' para buscar por URL, 'doc_id' para buscar por hash.
-            collection_name: Colección donde buscar. Si None, busca en ambas.
+    async def alist_documents(
+        self, collection_name: str = COLLECTION_INTERNOS, user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Lista documentos únicos (por doc_id) de un dominio."""
+        # Solo los documentos internos se listan en la UI.
+        return await list_internal_documents(user_id=user_id)
 
-        Returns:
-            True si el documento ya está indexado.
-        """
-        self._ensure_initialized()
-
-        collections_to_check = []
-        if collection_name:
-            collections_to_check = [collection_name]
-        else:
-            collections_to_check = [COLLECTION_NORMATIVA, COLLECTION_INTERNOS]
-
-        for coll_name in collections_to_check:
-            try:
-                collection = self._get_collection(coll_name)
-                if collection.count() == 0:
-                    continue
-
-                where_clause = {id_type: identifier}
-                results = collection.get(
-                    where=where_clause,
-                    limit=1,
-                    include=["metadatas"],
-                )
-
-                if results and results.get("ids"):
-                    return True
-            except Exception as e:
-                logger.debug(f"Error verificando existencia en '{coll_name}': {e}")
-
-        return False
-
-    def list_documents(self, collection_name: str = COLLECTION_INTERNOS, user_id: str | None = None) -> list[dict[str, Any]]:
-        """
-        Lista los documentos únicos (no chunks) en una colección.
-
-        Args:
-            collection_name: Nombre de la colección.
-
-        Returns:
-            Lista de documentos con metadata única por doc_id.
-        """
-        self._ensure_initialized()
-
-        try:
-            collection = self._get_collection(collection_name)
-            count = collection.count()
-            if count == 0:
-                return []
-
-            # Obtener todos los chunks con sus metadatas
-            get_params = {"limit": min(count, 10000), "include": ["metadatas"]}
-            if user_id:
-                get_params["where"] = {"user_id": user_id}
-            results = collection.get(**get_params)
-
-            if not results or not results.get("metadatas"):
-                return []
-
-            # Agrupar por doc_id para mostrar un documento único
-            seen_doc_ids = {}
-            for meta in results["metadatas"]:
-                doc_id = meta.get("doc_id", "")
-                if doc_id and doc_id not in seen_doc_ids:
-                    seen_doc_ids[doc_id] = {
-                        "doc_id": doc_id,
-                        "title": meta.get("title", "Sin título"),
-                        "filename": meta.get("filename", ""),
-                        "date": meta.get("date", ""),
-                        "url": meta.get("url", ""),
-                        "content_type": meta.get("content_type", ""),
-                        "source": meta.get("source", ""),
-                        "total_chunks": int(meta.get("total_chunks", 1)),
-                    }
-
-            return list(seen_doc_ids.values())
-
-        except Exception as e:
-            logger.error(f"Error listando documentos de '{collection_name}': {e}")
-            return []
+    async def aget_stats(self) -> dict[str, Any]:
+        """Estadísticas de conteo por colección lógica."""
+        counts = await count_chunks_by_domain()
+        normativa = counts.get("normative", 0)
+        internos = counts.get("internal", 0)
+        return {
+            COLLECTION_NORMATIVA: normativa,
+            COLLECTION_INTERNOS: internos,
+            "total": normativa + internos,
+        }
 
     # ------------------------------------------------------------------ #
     # Caché semántica                                                      #
     # ------------------------------------------------------------------ #
-
-    def cache_lookup(self, query: str) -> dict | None:
-        """
-        Busca una respuesta cacheada semánticamente similar a la query.
-        Retorna dict con {answer, sources, query_type} si hay hit, None si no.
-        """
-        self._ensure_initialized()
+    async def acache_lookup(self, query: str) -> Optional[dict]:
+        """Busca una respuesta cacheada semánticamente similar a la query."""
+        if not is_pg_enabled():
+            return None
+        embedding = await self._aembed_one(query)
+        if embedding is None:
+            return None
         try:
-            if self._collection_cache.count() == 0:
-                return None
-
-            embedding = self._embed([query])[0]
-            result = self._collection_cache.query(
-                query_embeddings=[embedding],
-                n_results=1,
-                include=["documents", "metadatas", "distances"],
-            )
-
-            if not result or not result.get("ids") or not result["ids"][0]:
-                return None
-
-            distance = result["distances"][0][0]
-            if distance > CACHE_DISTANCE_THRESHOLD:
-                return None
-
-            meta = result["metadatas"][0][0]
-            created_at = float(meta.get("created_at", 0))
-            age_hours = (time.time() - created_at) / 3600
-            if age_hours > CACHE_TTL_HOURS:
-                return None
-
-            sources = json.loads(meta.get("sources_json", "[]"))
-            logger.info(f"[cache] HIT (distancia={distance:.4f}, edad={age_hours:.1f}h)")
-            return {
-                "answer": meta.get("answer", ""),
-                "sources": sources,
-                "query_type": meta.get("query_type", "general"),
-                "cache_hit": True,
-            }
+            hit = await cache_lookup_pg(embedding, CACHE_DISTANCE_THRESHOLD, CACHE_TTL_HOURS)
+            if hit:
+                logger.info("[cache] HIT")
+            return hit
         except Exception as e:
             logger.warning(f"[cache] Error en lookup: {e}")
             return None
 
-    def cache_store(
-        self,
-        query: str,
-        answer: str,
-        sources: list,
-        query_type: str,
+    async def acache_store(
+        self, query: str, answer: str, sources: list, query_type: str,
     ) -> None:
         """Almacena una respuesta en el caché semántico."""
-        self._ensure_initialized()
+        if not is_pg_enabled():
+            return
+        embedding = await self._aembed_one(query)
+        if embedding is None:
+            return
         try:
-            embedding = self._embed([query])[0]
-            cache_id = hashlib.sha256(query.encode()).hexdigest()[:16]
-            self._collection_cache.upsert(
-                ids=[cache_id],
-                embeddings=[embedding],
-                documents=[query],
-                metadatas=[{
-                    "answer": answer[:8000],  # limite de seguridad
-                    "sources_json": json.dumps(sources, ensure_ascii=False)[:4000],
-                    "query_type": query_type,
-                    "created_at": float(time.time()),
-                }],
-            )
-            logger.info(f"[cache] Almacenado: {cache_id}")
+            await cache_store_pg(query, embedding, answer, sources, query_type)
+            logger.info("[cache] Almacenado")
         except Exception as e:
             logger.warning(f"[cache] Error almacenando: {e}")
-
-    # ------------------------------------------------------------------ #
-    # Wrappers asíncronos (Ticket 003)                                     #
-    # Delegan la operación completa (embeddings + I/O de ChromaDB) al pool #
-    # de hilos, liberando el event loop de FastAPI.                        #
-    # ------------------------------------------------------------------ #
-
-    async def aadd_documents(self, chunks: list[dict[str, Any]],
-                             collection_name: str = COLLECTION_NORMATIVA) -> int:
-        """Versión async de add_documents (no bloquea el event loop)."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.add_documents, chunks, collection_name)
-
-    async def asearch(self, query: str, collection_name: str | None = None,
-                      top_k: int = 3, filter_metadata: dict | None = None) -> list[dict[str, Any]]:
-        """Versión async de search (no bloquea el event loop)."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self.search(query, collection_name, top_k, filter_metadata)
-        )
-
-    async def acache_lookup(self, query: str) -> dict | None:
-        """Versión async de cache_lookup (no bloquea el event loop)."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.cache_lookup, query)
-
-    async def acache_store(self, query: str, answer: str, sources: list,
-                           query_type: str) -> None:
-        """Versión async de cache_store (no bloquea el event loop)."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None, self.cache_store, query, answer, sources, query_type
-        )
-
-    def close(self):
-        """Cierra la conexión con ChromaDB."""
-        # ChromaDB PersistentClient no requiere cierre explícito
-        logger.info("VectorStore cerrado")

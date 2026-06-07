@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, LOGS_DIR, UPLOADS_DIR
 from backend.indexer.document_processor import DocumentProcessor
-from backend.indexer.vectorstore import VectorStore, COLLECTION_INTERNOS, COLLECTION_NORMATIVA
+from backend.indexer.vectorstore import VectorStore, COLLECTION_INTERNOS, COLLECTION_NORMATIVA, COLLECTION_CACHE
 from backend.query_logger import get_queries, get_summary, initialize_db, log_query
 from backend.rag.engine import RAGEngine
 from backend.scheduler import get_status, run_now, start_scheduler, stop_scheduler
@@ -454,7 +454,7 @@ async def export_pdf(
 async def list_documents(current_user: dict = Depends(get_current_user)):
     """Lista los documentos internos del usuario autenticado."""
     try:
-        docs = vector_store.list_documents(COLLECTION_INTERNOS, user_id=current_user["id"])
+        docs = await vector_store.alist_documents(COLLECTION_INTERNOS, user_id=current_user["id"])
         return {"documents": docs, "total": len(docs)}
     except Exception as e:
         logger.error(f"Error listando documentos: {e}")
@@ -501,7 +501,7 @@ async def upload_document(
     file_hash = hashlib.sha256(content).hexdigest()[:16]
 
     # Verificar si ya está indexado
-    if vector_store.is_document_indexed(file_hash, id_type="doc_id", collection_name=COLLECTION_INTERNOS):
+    if await vector_store.ais_document_indexed(file_hash, id_type="doc_id", collection_name=COLLECTION_INTERNOS):
         raise HTTPException(
             status_code=409,
             detail="Este documento ya ha sido indexado anteriormente",
@@ -547,9 +547,7 @@ async def upload_document(
                 detail="No se pudo extraer texto del documento. Verifique que no esté corrupto.",
             )
 
-        added = await loop.run_in_executor(
-            None, vector_store.add_documents, chunks, COLLECTION_INTERNOS
-        )
+        added = await vector_store.aadd_documents(chunks, COLLECTION_INTERNOS)
 
         # Persistir metadatos en PostgreSQL (no-op si PG no está configurado)
         await pg_upsert(
@@ -583,17 +581,17 @@ async def upload_document(
 
 
 @app.delete("/api/documents/{doc_id}")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
     """Elimina un documento interno por su doc_id."""
     if not doc_id or len(doc_id) > 64:
         raise HTTPException(status_code=400, detail="doc_id inválido")
 
     try:
-        # Obtener info del documento antes de eliminar (en hilo: no bloquea el loop)
-        docs = await asyncio.to_thread(vector_store.list_documents, COLLECTION_INTERNOS)
+        # Obtener info del documento antes de eliminar (del usuario autenticado)
+        docs = await vector_store.alist_documents(COLLECTION_INTERNOS, user_id=current_user["id"])
         doc_info = next((d for d in docs if d["doc_id"] == doc_id), None)
 
-        deleted = await asyncio.to_thread(vector_store.delete_document, doc_id, COLLECTION_INTERNOS)
+        deleted = await vector_store.adelete_document(doc_id, COLLECTION_INTERNOS)
 
         if not deleted:
             raise HTTPException(
@@ -605,14 +603,13 @@ async def delete_document(doc_id: str):
         if doc_info and doc_info.get("filename"):
             _try_delete_file(doc_info["filename"], doc_id)
 
-        # Eliminar de PostgreSQL (no-op si PG no está configurado)
+        # Eliminar de PostgreSQL (metadatos del documento)
         await delete_document_pg(doc_id, current_user.get("id", ""))
 
         # Vaciar caché semántica: las respuestas cacheadas pueden referenciar
         # el documento eliminado y quedarían obsoletas
         try:
-            from backend.indexer.vectorstore import COLLECTION_CACHE
-            await asyncio.to_thread(vector_store.clear_collection, COLLECTION_CACHE)
+            await vector_store.aclear_collection(COLLECTION_CACHE)
             logger.info(f"Caché semántica vaciada tras eliminar documento {doc_id}")
         except Exception as e:
             logger.warning(f"No se pudo vaciar caché tras eliminar documento: {e}")
@@ -680,6 +677,81 @@ async def query_documents_metadata(
 
 
 # ------------------------------------------------------------------ #
+# Rutas: Ingesta transaccional asíncrona (AGENT-002)                   #
+# ------------------------------------------------------------------ #
+async def _process_transactional_ingest(
+    raw: bytes, filename: str, operation_id: str, origin_country: str
+) -> None:
+    """
+    Worker en segundo plano (BackgroundTasks): parsea → segmenta → embeddings OpenAI
+    → inserta en agentia_knowledge_chunks (domain='transactional'). Todo el proceso
+    va envuelto en try/except con logging detallado para auditoría.
+    """
+    from backend.indexer.transactional_parser import parse_and_chunk
+    from backend.embeddings import embed_texts
+    from backend.database import insert_knowledge_chunks
+    try:
+        logger.info(f"[ingest-transactional] inicio op={operation_id} archivo={filename}")
+        # Parseo/segmentación (CPU) en hilo: no bloquea el event loop.
+        chunk_texts = await asyncio.to_thread(
+            parse_and_chunk, raw, filename, operation_id, origin_country
+        )
+        if not chunk_texts:
+            logger.warning(f"[ingest-transactional] op={operation_id}: sin texto extraíble de {filename}")
+            return
+        # Embeddings (OpenAI, async — no bloquea el loop).
+        vectors = await embed_texts(chunk_texts)
+        chunks = [
+            {"content": t, "embedding": v,
+             "metadata": {"operation_id": operation_id, "origin_country": origin_country, "filename": filename}}
+            for t, v in zip(chunk_texts, vectors)
+        ]
+        n = await insert_knowledge_chunks(chunks, domain="transactional")
+        logger.info(
+            f"[ingest-transactional] op={operation_id}: {n} chunks indexados (domain=transactional)",
+            extra={"event": "transactional_ingested", "operation_id": operation_id,
+                   "origin_country": origin_country, "chunks": n},
+        )
+    except Exception as e:
+        logger.error(
+            f"[ingest-transactional] ERROR op={operation_id} archivo={filename}: {type(e).__name__}: {e}",
+            exc_info=True,
+            extra={"event": "transactional_ingest_error", "operation_id": operation_id},
+        )
+
+
+@app.post("/v1/ingest/transactional")
+async def ingest_transactional(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    operation_id: str = Form(...),
+    origin_country: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Ingesta en caliente de documentación transaccional (DIN/Excel/ficha técnica).
+    Valida el formato de inmediato y delega el trabajo pesado a BackgroundTasks,
+    respondiendo 202 Accepted en <200ms para no comprometer la disponibilidad de la API.
+    """
+    from backend.indexer.transactional_parser import ALLOWED_EXTS
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Permitidos: .pdf, .xlsx, .csv")
+    if not operation_id.strip() or not origin_country.strip():
+        raise HTTPException(status_code=400, detail="operation_id y origin_country son obligatorios")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+
+    background_tasks.add_task(
+        _process_transactional_ingest, raw, file.filename, operation_id, origin_country
+    )
+    logger.info(f"[ingest-transactional] encolado op={operation_id} ({len(raw)} bytes)")
+    return JSONResponse(status_code=202, content={"status": "queued", "operation_id": operation_id})
+
+
+# ------------------------------------------------------------------ #
 # Rutas: Scraper                                                       #
 # ------------------------------------------------------------------ #
 @app.get("/api/scraper/status", response_model=ScraperStatusResponse)
@@ -687,7 +759,7 @@ async def scraper_status():
     """Retorna el estado del scraper y estadísticas de la base de datos."""
     try:
         status = get_status()
-        stats = vector_store.get_stats()
+        stats = await vector_store.aget_stats()
 
         return ScraperStatusResponse(
             last_run=status.get("last_run"),
@@ -723,7 +795,6 @@ async def trigger_scraper():
 @app.post("/api/scraper/reset")
 async def reset_normativa():
     """Limpia la colección de normativa y lanza un nuevo scraping desde cero."""
-    from backend.indexer.vectorstore import COLLECTION_NORMATIVA
     status = get_status()
     if status.get("scraper_currently_running"):
         raise HTTPException(
@@ -731,8 +802,8 @@ async def reset_normativa():
             detail="El scraper ya está en ejecución. Espere a que termine.",
         )
     try:
-        await asyncio.to_thread(vector_store.clear_collection, COLLECTION_NORMATIVA)
-        logger.info("Colección normativa_aduanera limpiada")
+        await vector_store.aclear_collection(COLLECTION_NORMATIVA)
+        logger.info("Dominio de normativa limpiado")
     except Exception as e:
         logger.error(f"Error limpiando colección: {e}")
         raise HTTPException(status_code=500, detail=f"Error al limpiar la colección: {e}")
@@ -780,10 +851,8 @@ async def get_scraper_logs():
 @app.post("/api/admin/cache/clear")
 async def clear_semantic_cache(current_user: dict = Depends(get_current_user)):
     """Vacía la caché semántica de respuestas. Útil tras re-indexar documentos."""
-    from backend.indexer.vectorstore import COLLECTION_CACHE
     try:
-        # En hilo: las operaciones de ChromaDB (SQLite) no deben bloquear el event loop.
-        await asyncio.to_thread(vector_store.clear_collection, COLLECTION_CACHE)
+        await vector_store.aclear_collection(COLLECTION_CACHE)
         logger.info(f"Caché semántica vaciada por {current_user.get('email')}")
         return {"message": "Caché semántica vaciada correctamente.", "status": "ok"}
     except Exception as e:
@@ -926,20 +995,22 @@ async def serve_index():
 
 @app.get("/health")
 async def health_check():
-    """Endpoint de verificación de salud del sistema."""
+    """Endpoint de verificación de salud del sistema.
+
+    Las estadísticas son best-effort: un hipo de la BD NO debe marcar el
+    contenedor como unhealthy y sacarlo del proxy. Mientras la app responda, ok.
+    """
     try:
-        stats = vector_store.get_stats()
-        return {
-            "status": "ok",
-            "vectorstore": "conectado",
-            "docs_normativa": stats.get("normativa_aduanera", 0),
-            "docs_internos": stats.get("documentos_internos", 0),
-        }
+        stats = await vector_store.aget_stats()
     except Exception as e:
-        return JSONResponse(
-            status_code=503,
-            content={"status": "error", "detail": str(e)},
-        )
+        logger.warning(f"/health: estadísticas no disponibles: {e}")
+        stats = {}
+    return {
+        "status": "ok",
+        "vectorstore": "pgvector",
+        "docs_normativa": stats.get(COLLECTION_NORMATIVA, 0),
+        "docs_internos": stats.get(COLLECTION_INTERNOS, 0),
+    }
 
 
 # ------------------------------------------------------------------ #

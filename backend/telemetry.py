@@ -88,7 +88,7 @@ def _configure_logging() -> None:
     root.addHandler(handler)
 
     # Silenciar librerías ruidosas
-    for noisy in ("uvicorn.access", "httpx", "httpcore", "chromadb"):
+    for noisy in ("uvicorn.access", "httpx", "httpcore", "openai", "asyncpg"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -162,22 +162,3 @@ def log_llm_call(
     )
 
 
-# ── Métricas búsqueda vectorial ───────────────────────────────────────────────
-
-@contextmanager
-def trace_vector_search(collection: str, top_k: int) -> Generator[None, None, None]:
-    """Context manager que mide latencia de búsqueda en ChromaDB."""
-    t0 = time.perf_counter()
-    try:
-        yield
-    finally:
-        duration_ms = round((time.perf_counter() - t0) * 1000, 1)
-        logging.getLogger("telemetry.vector").info(
-            "vector_search",
-            extra={
-                "event":       "vector_search",
-                "collection":  collection,
-                "top_k":       top_k,
-                "duration_ms": duration_ms,
-            },
-        )

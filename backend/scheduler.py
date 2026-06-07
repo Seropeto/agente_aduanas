@@ -204,9 +204,9 @@ async def _run_all_scrapers() -> dict[str, Any]:
                         if is_changed:
                             old_doc_id = stored["doc_id"]
                             try:
-                                vector_store.delete_document(old_doc_id, COLLECTION_NORMATIVA)
+                                await vector_store.adelete_document(old_doc_id, COLLECTION_NORMATIVA)
                                 scraper_log.info(
-                                    f"Chunks anteriores eliminados de ChromaDB: {old_doc_id}"
+                                    f"Chunks anteriores eliminados de PostgreSQL: {old_doc_id}"
                                 )
                             except Exception as e:
                                 scraper_log.warning(f"No se pudieron eliminar chunks viejos: {e}")
@@ -227,7 +227,7 @@ async def _run_all_scrapers() -> dict[str, Any]:
                         chunks = processor.process_text(content, metadata)
 
                         if chunks:
-                            added = vector_store.add_documents(chunks, COLLECTION_NORMATIVA)
+                            added = await vector_store.aadd_documents(chunks, COLLECTION_NORMATIVA)
                             if added > 0:
                                 scraper_docs += 1
                                 total_docs_added += 1
@@ -284,7 +284,7 @@ async def _run_all_scrapers() -> dict[str, Any]:
                     "status": f"error: {str(e)}",
                 }
 
-        stats = vector_store.get_stats()
+        stats = await vector_store.aget_stats()
         total_in_store = stats.get("total", 0)
 
     except Exception as e:

@@ -323,15 +323,32 @@ def run_seed_local(vector_store=None, dry_run: bool = False) -> list[dict]:
     return resultados
 
 
-# ── Ingesta a ChromaDB ────────────────────────────────────────────────────────
+# ── Ingesta a PostgreSQL (pgvector, dominio 'normative') ──────────────────────
 
 def ingest_chunks(chunks: list[dict[str, Any]], vector_store=None) -> int:
-    """Indexa los chunks en la colección de normativa oficial."""
+    """
+    Indexa los chunks en el dominio de normativa oficial (pgvector).
+
+    Bridge sync→async: abre un pool de PostgreSQL propio para esta invocación,
+    embebe con OpenAI e inserta, y lo cierra. Determinista aunque queden globals
+    de un asyncio.run previo (init_pool recrea el pool en el loop actual).
+    """
+    import asyncio as _asyncio
     from backend.indexer.vectorstore import VectorStore, COLLECTION_NORMATIVA
-    if vector_store is None:
-        vector_store = VectorStore()
-        vector_store.initialize()
-    return vector_store.add_documents(chunks, COLLECTION_NORMATIVA)
+    from backend.database import init_pool, close_pool, is_pg_enabled
+
+    async def _run() -> int:
+        await init_pool()
+        if not is_pg_enabled():
+            logger.error("PostgreSQL no disponible — no se pueden indexar los chunks")
+            return 0
+        try:
+            vs = VectorStore()
+            return await vs.aadd_documents(chunks, COLLECTION_NORMATIVA)
+        finally:
+            await close_pool()
+
+    return _asyncio.run(_run())
 
 
 def ingest_file(
