@@ -42,7 +42,8 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - agentia_net
+      - agentia_net   # comunicación interna con postgres (DNS por nombre fijo)
+      - coolify       # red del proxy: permite que Traefik alcance el puerto 8000
     volumes:
       - uploads_data:/app/data/uploads
       - logs_data:/app/data/logs
@@ -75,3 +76,7 @@ networks:
   agentia_net:
     name: agentia_net
     driver: bridge
+  # Red global del proxy de Coolify (Traefik). Externa: ya existe, no la crea Compose.
+  # Adjuntar agentia a esta red resuelve el aislamiento que causaba el 504.
+  coolify:
+    external: true
