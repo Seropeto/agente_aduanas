@@ -42,8 +42,9 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - agentia_net   # red privada interna para Postgres (DNS por nombre fijo)
-      - host_bridge   # red base del sistema Docker para el enlace del proxy
+      # Solo la red interna (API ↔ Postgres por DNS de nombre fijo). La red del
+      # proxy la inyecta Coolify de forma nativa (no se cablea a mano aquí).
+      - agentia_net
     volumes:
       - uploads_data:/app/data/uploads
       - logs_data:/app/data/logs
@@ -76,8 +77,3 @@ networks:
   agentia_net:
     name: agentia_net
     driver: bridge
-  # Red base del sistema Docker (la 'bridge' por defecto), declarada externa para
-  # no acoplar AgentIA a redes de otros proyectos. Mapeo seguro al puente del host.
-  host_bridge:
-    external: true
-    name: bridge
