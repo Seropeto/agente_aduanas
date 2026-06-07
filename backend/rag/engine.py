@@ -1,6 +1,7 @@
 """
 Motor RAG (Retrieval-Augmented Generation) para el Agente de Aduanas Chile.
-Integra ChromaDB para recuperación de documentos y Claude para generación de respuestas.
+Recupera contexto desde PostgreSQL + pgvector (VectorStore unificado) y genera
+respuestas con Claude.
 """
 import asyncio
 import logging
@@ -431,7 +432,7 @@ class RAGEngine:
         merged.sort(key=self._rank_key)
         return merged
 
-    def _retrieve_all_mode_balanced(
+    async def _aretrieve_all_mode_balanced(
         self,
         query: str,
         user_id: str | None,
@@ -459,7 +460,7 @@ class RAGEngine:
 
         # 1. Búsquedas independientes por colección
         try:
-            norm_candidates = self.vector_store.search(
+            norm_candidates = await self.vector_store.asearch(
                 query=query,
                 collection_name=COLLECTION_NORMATIVA,
                 top_k=MIXED_TOP_K_CANDIDATES,
@@ -469,7 +470,7 @@ class RAGEngine:
             norm_candidates = []
 
         try:
-            int_candidates = self.vector_store.search(
+            int_candidates = await self.vector_store.asearch(
                 query=query,
                 collection_name=COLLECTION_INTERNOS,
                 top_k=MIXED_TOP_K_CANDIDATES,
@@ -874,7 +875,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             if self._extract_title_fragment(query):
                 return None
             try:
-                return await asyncio.to_thread(self.vector_store.cache_lookup, query)
+                return await self.vector_store.acache_lookup(query)
             except Exception as e:
                 logger.warning(f"Error en caché lookup: {e}")
                 return None
@@ -891,7 +892,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         cached, history, (top_results, context_text, sources) = await asyncio.gather(
             _cache(),
             _history(),
-            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id, document_id),
+            self._aretrieve_documents(query, query_type, filter_collection, user_id, document_id),
         )
 
         # Detectar si hay documentos internos recuperados por coincidencia de título
@@ -1051,7 +1052,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         except Exception as e:
             logger.warning(f"Error generando resumen de historial: {e}")
 
-    def _retrieve_documents(
+    async def _aretrieve_documents(
         self,
         query: str,
         query_type: str,
@@ -1073,7 +1074,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         # Paso 0: document_id activo → búsqueda aislada exclusivamente en ese documento
         if document_id:
             try:
-                results = self.vector_store.search(
+                results = await self.vector_store.asearch(
                     query=query,
                     collection_name=COLLECTION_INTERNOS,
                     top_k=TOP_K_INTERNOS,
@@ -1089,12 +1090,15 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 # fallback a búsqueda normal si el filtro falla
 
         # Paso 1: búsqueda por título en internos (aditiva, no excluye normativa)
+        # title_fragment se inicializa SIEMPRE: el elif posterior lo evalúa aunque el
+        # filtro sea 'normativa' (donde este bloque no lo asignaría) → evita UnboundLocalError.
+        title_fragment = None
         title_results = []
         if filter_collection in ("all", "internos"):
             title_fragment = self._extract_title_fragment(query)
             if title_fragment:
                 try:
-                    title_results = self.vector_store.get_chunks_by_title_fragment(
+                    title_results = await self.vector_store.aget_chunks_by_title_fragment(
                         title_fragment, COLLECTION_INTERNOS, user_id=user_id
                     )
                     if title_results:
@@ -1114,7 +1118,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         # extracción aislada con cuotas fijas por colección (ningún fragmento
         # de normativa compite con internos por la misma posición del Top-K).
         if effective_filter == "all" and not title_results:
-            return self._retrieve_all_mode_balanced(query, user_id)
+            return await self._aretrieve_all_mode_balanced(query, user_id)
 
         collection_strategy = self._determine_collection_priority(query_type, effective_filter)
 
@@ -1125,7 +1129,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 meta_filter = None
                 if collection_name == COLLECTION_INTERNOS and user_id:
                     meta_filter = {"user_id": user_id}
-                results = self.vector_store.search(
+                results = await self.vector_store.asearch(
                     query=query,
                     collection_name=collection_name,
                     top_k=top_k,
@@ -1151,7 +1155,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             # title search no encontró coincidencias (puede ser discrepancia en metadatos)
             try:
                 meta_filter = {"user_id": user_id} if user_id else None
-                fallback = self.vector_store.search(
+                fallback = await self.vector_store.asearch(
                     query=query,
                     collection_name=COLLECTION_INTERNOS,
                     top_k=TOP_K_RESULTS,
@@ -1294,7 +1298,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             if self._extract_title_fragment(query):
                 return None
             try:
-                return await asyncio.to_thread(self.vector_store.cache_lookup, query)
+                return await self.vector_store.acache_lookup(query)
             except Exception as e:
                 logger.warning(f"[stream] Error en caché lookup: {e}")
                 return None
@@ -1313,7 +1317,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
         cached, history, (top_results, context_text, sources), route = await asyncio.gather(
             _cache(),
             _history(),
-            asyncio.to_thread(self._retrieve_documents, query, query_type, filter_collection, user_id, document_id),
+            self._aretrieve_documents(query, query_type, filter_collection, user_id, document_id),
             self.router.route(query, user_id),
         )
 
