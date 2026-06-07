@@ -48,6 +48,13 @@ services:
       - logs_data:/app/data/logs
     expose:
       - "8000"
+    # Enrutamiento explícito de Traefik (proxy de Coolify) hacia el puerto 8000.
+    # Sin estas labels el proxy no sabe a qué puerto enviar el tráfico externo → 504.
+    labels:
+      - "coolify.managed=true"
+      - "traefik.enable=true"
+      - "traefik.http.routers.agentia.rule=Host(`aduanas.toxirodigital.cloud`)"
+      - "traefik.http.services.agentia.loadbalancer.server.port=8000"
     healthcheck:
       # La imagen python:3.11-slim NO trae curl; usamos Python (siempre presente).
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
