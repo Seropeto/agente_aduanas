@@ -42,21 +42,15 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      # Solo la red interna (API ↔ Postgres por DNS de nombre fijo). La red del
-      # proxy la inyecta Coolify de forma nativa (no se cablea a mano aquí).
-      - agentia_net
+      - agentia_net          # red privada interna (API ↔ Postgres por DNS de nombre fijo)
+      - coolify_proxy_real   # red compartida REAL del proxy en este stack (Traefik)
     volumes:
       - uploads_data:/app/data/uploads
       - logs_data:/app/data/logs
     expose:
       - "8000"
-    # Enrutamiento explícito de Traefik (proxy de Coolify) hacia el puerto 8000.
-    # Sin estas labels el proxy no sabe a qué puerto enviar el tráfico externo → 504.
-    labels:
-      - "coolify.managed=true"
-      - "traefik.enable=true"
-      - "traefik.http.routers.agentia.rule=Host(`aduanas.toxirodigital.cloud`)"
-      - "traefik.http.services.agentia.loadbalancer.server.port=8000"
+    # El enrutamiento (router, TLS y labels) lo gestiona Coolify nativamente desde el
+    # panel. NO declaramos labels manuales: competían con las dinámicas y causaban 504.
     healthcheck:
       # La imagen python:3.11-slim NO trae curl; usamos Python (siempre presente).
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -77,3 +71,9 @@ networks:
   agentia_net:
     name: agentia_net
     driver: bridge
+  # Red compartida REAL del proxy de Coolify en este stack (verificada por inspección
+  # docker en el VPS). Externa: ya existe; aquí solo se enlaza para que Traefik alcance
+  # la API. El enrutamiento HTTP/TLS lo generan las labels dinámicas del panel.
+  coolify_proxy_real:
+    external: true
+    name: j85i9ndz73g
