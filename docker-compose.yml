@@ -71,9 +71,9 @@ networks:
   agentia_net:
     name: agentia_net
     driver: bridge
-  # Red compartida REAL del proxy de Coolify en este stack (verificada por inspección
-  # docker en el VPS). Externa: ya existe; aquí solo se enlaza para que Traefik alcance
-  # la API. El enrutamiento HTTP/TLS lo generan las labels dinámicas del panel.
+  # Red troncal física del proxy de Coolify en el VPS (entidad real en el motor Docker;
+  # 'j85i9ndz73g' era solo un alias lógico del panel → network not found). Externa: ya
+  # existe. El enrutamiento HTTP/TLS lo generan las labels dinámicas del panel.
   coolify_proxy_real:
     external: true
-    name: j85i9ndz73g
+    name: coolify
