@@ -287,26 +287,23 @@ class RAGEngine:
                     return text[start:i + 1]
         return text[start:]
 
-    def _parse_llm_json(self, raw: str, open_mode: bool | None = None) -> tuple[bool, str]:
+    def _parse_llm_json(self, raw: str) -> tuple[bool, str]:
         """
         Parsea la respuesta JSON del LLM. Soporta respuestas con prefill ('{' ya
         antepuesto por el caller) y sin prefill (objeto JSON completo en el cuerpo).
         Retorna (respuesta_encontrada, analisis_texto).
         En caso de fallo de parseo, retorna NOT_FOUND_RESPONSE de forma segura.
-
-        open_mode (Capa 2 fundacional): si True, respeta el analisis_texto del LLM
-        aunque respuesta_encontrada sea false. Si None, usa el RAG_MODE global.
         """
-        if open_mode is None:
-            open_mode = (RAG_MODE == "open")
         try:
             text = self._extract_json_object(raw)
             data = json.loads(text)
             found = bool(data.get("respuesta_encontrada", False))
             texto = str(data.get("analisis_texto", NOT_FOUND_RESPONSE)).strip()
-            if not found and not open_mode:
-                # Modo strict: siempre reemplazar con mensaje hardcodeado.
-                texto = NOT_FOUND_RESPONSE
+            if not found:
+                if RAG_MODE != "open":
+                    # Modo strict: siempre reemplazar con mensaje hardcodeado.
+                    texto = NOT_FOUND_RESPONSE
+                # Modo open: respetar analisis_texto del LLM aunque diga false.
             return found, texto
         except Exception as exc:
             logger.warning(f"JSON parse falló ({exc}) — usando NOT_FOUND_RESPONSE")
@@ -669,15 +666,9 @@ class RAGEngine:
         return f"{type_str}: {title}{date_str} — {source}"
 
     def _build_user_message(
-        self, query: str, context: str, query_type: str, has_internal_results: bool = False,
-        open_mode: bool | None = None,
+        self, query: str, context: str, query_type: str, has_internal_results: bool = False
     ) -> str:
-        """Construye el mensaje del usuario para Claude.
-
-        open_mode fuerza el modo fundacional para ESTA consulta (Capa 2), con
-        independencia del RAG_MODE global. Si es None, usa el RAG_MODE de entorno."""
-        if open_mode is None:
-            open_mode = (RAG_MODE == "open")
+        """Construye el mensaje del usuario para Claude."""
         # Cuando hay documentos internos recuperados por título, Claude debe mostrar
         # el contenido directamente sin aplicar restricciones de ámbito aduanero.
         if has_internal_results and context:
@@ -702,7 +693,7 @@ INSTRUCCIÓN OBLIGATORIA: Esto es una búsqueda en documentos internos del usuar
         hint = type_hints.get(query_type, "")
 
         if context:
-            if open_mode:
+            if RAG_MODE == "open":
                 message = f"""Documentos de referencia recuperados del sistema (úsalos si son relevantes):
 
 {context}
@@ -725,12 +716,11 @@ Consulta del usuario: {query}
 
 Responde según el esquema JSON definido en las instrucciones del sistema. Usa únicamente la información contenida en los bloques anteriores y cita nombre, número y fecha de cada fuente."""
         else:
-            if open_mode:
+            if RAG_MODE == "open":
                 message = f"""{hint}
 Consulta del usuario: {query}
 
-No hay documentos indexados específicos sobre este tema. Usa tu conocimiento experto sobre el Sistema Armonizado, el Arancel Aduanero de Chile y la normativa tributaria (DL 825) para responder con rigor.
-Si la consulta implica clasificación arancelaria, indica la partida/subpartida del Sistema Armonizado más probable y su fundamento (Reglas Generales Interpretativas). Si implica tributos, expón la fórmula correcta (IVA sobre CIF + derechos aduaneros). "respuesta_encontrada" debe ser true."""
+No hay documentos indexados sobre este tema. Usa tu conocimiento experto sobre la normativa aduanera y tributaria de Chile para responder. "respuesta_encontrada" debe ser true."""
             else:
                 message = f"""{hint}
 Consulta del usuario: {query}
@@ -738,38 +728,6 @@ Consulta del usuario: {query}
 No hay documentos sobre este tema en el sistema en este momento. Responde con el esquema JSON indicando "respuesta_encontrada": false."""
 
         return message
-
-    # ── Arquitectura híbrida de 3 capas (#AGENTIA-204) ───────────────────────
-    async def _build_operative_refusal(self, query: str) -> str:
-        """Capa 2-refuse: consulta operativa (DIN/despacho/país) sin datos cargados →
-        protocolo de frustración elegante con la plantilla corporativa exacta."""
-        from backend.rag import frustration as _fr
-        try:
-            from backend.database import get_available_operations
-            avail = await get_available_operations()
-        except Exception:
-            avail = {"operations": [], "countries": []}
-        labels = (avail.get("countries") or []) + (avail.get("operations") or [])
-        requested = _fr.requested_label(query) or "la operación solicitada"
-        return _fr.build_frustration_response(requested, labels)
-
-    def _apply_disclaimer(self, answer: str) -> str:
-        """Capa 2: antepone (por código, no por el LLM) la etiqueta obligatoria de
-        conocimiento paramétrico."""
-        from backend.rag.compliance_cl import DISCLAIMER
-        if answer.startswith(DISCLAIMER):
-            return answer
-        return f"{DISCLAIMER}\n\n{answer}"
-
-    def _maybe_append_calc(self, query: str, answer: str) -> str:
-        """Capa 3: si la consulta trae un valor CIF, anexa el cálculo tributario
-        determinista (IVA sobre CIF + derechos), independientemente de la capa."""
-        from backend.rag import compliance_cl as _cc
-        cif = _cc.extract_cif(query)
-        if cif is None:
-            return answer
-        bloque = _cc.format_calculation_md(_cc.compute_import_taxes(cif))
-        return f"{answer}\n\n{bloque}"
 
     def _build_changelog_context(self, changes: list[dict], period_desc: str) -> str:
         """Construye el contexto textual a partir de entradas del changelog."""
@@ -955,25 +913,18 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 "cache_hit": True,
             }
 
-        # Capas 1/2/3 (#AGENTIA-204): sin contexto recuperado → decidir por intención.
-        foundational = False
-        if not context_text:
-            from backend.rag import frustration as _fr
-            if _fr.is_operative_query(query):
-                # Operación / DIN / despacho sin datos cargados → frustración estricta.
-                refusal = await self._build_operative_refusal(query)
-                return {
-                    "answer": refusal, "sources": [],
-                    "query_type": query_type, "total_chunks_retrieved": 0,
-                }
-            # Consulta normativa / genérica → Capa 2 fundacional (conocimiento del modelo).
-            foundational = True
-
-        _open = foundational or (RAG_MODE == "open")
-        _sys_prompt = SYSTEM_PROMPT_OPEN if _open else SYSTEM_PROMPT
+        # Short-circuit: sin contexto → en modo strict retorna NOT_FOUND sin llamar al LLM.
+        # En modo open el LLM se llama igual para usar conocimiento paramétrico.
+        if not context_text and RAG_MODE != "open":
+            return {
+                "answer": NOT_FOUND_RESPONSE,
+                "sources": [],
+                "query_type": query_type,
+                "total_chunks_retrieved": 0,
+            }
 
         # 3. Construir mensajes para Claude
-        user_message = self._build_user_message(query, context_text, query_type, has_internal_results, open_mode=_open)
+        user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
         # 4. Llamar a Claude con prefill JSON
@@ -990,7 +941,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 model=selected_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
-                system=_sys_prompt,
+                system=_ACTIVE_PROMPT,
                 messages=_msgs,
             )
             _resp_text = response.content[0].text or ""
@@ -998,18 +949,13 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 # Prefill devolvió vacío → reintentar sin prefill (parse tolera fences).
                 response = await client.messages.create(
                     model=selected_model, max_tokens=4096, temperature=LLM_TEMPERATURE,
-                    system=_sys_prompt, messages=messages,
+                    system=_ACTIVE_PROMPT, messages=messages,
                 )
                 raw_response = response.content[0].text or ""
             else:
                 raw_response = ("{" + _resp_text) if _use_prefill else _resp_text
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
-            _, answer = self._parse_llm_json(raw_response, open_mode=_open)
-            # Capa 2 (disclaimer) + Capa 3 (cálculo determinista) por código.
-            if foundational and answer and not answer.startswith("Error:") and answer != NOT_FOUND_RESPONSE:
-                answer = self._apply_disclaimer(answer)
-            if answer and not answer.startswith("Error:") and answer != NOT_FOUND_RESPONSE:
-                answer = self._maybe_append_calc(query, answer)
+            _, answer = self._parse_llm_json(raw_response)
             log_llm_call(
                 model=selected_model,
                 prompt_tokens=response.usage.input_tokens,
@@ -1406,25 +1352,16 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
             })
             return
 
-        # Capas 1/2/3 (#AGENTIA-204): sin contexto → decidir por intención.
-        foundational = False
-        if not context_text:
-            from backend.rag import frustration as _fr
-            if _fr.is_operative_query(query):
-                # Operación / DIN / despacho sin datos cargados → frustración estricta.
-                refusal = await self._build_operative_refusal(query)
-                yield _sse({"type": "token", "text": refusal})
-                yield _sse({"type": "done", "sources": [], "query_type": query_type, "chunks": 0})
-                return
-            # Consulta normativa / genérica → Capa 2 fundacional.
-            foundational = True
-
-        _open = foundational or (RAG_MODE == "open")
-        _sys_prompt = SYSTEM_PROMPT_OPEN if _open else SYSTEM_PROMPT
+        # Short-circuit: sin contexto → en modo strict retorna NOT_FOUND sin llamar al LLM.
+        # En modo open el LLM se llama igual para usar conocimiento paramétrico.
+        if not context_text and RAG_MODE != "open":
+            yield _sse({"type": "token", "text": NOT_FOUND_RESPONSE})
+            yield _sse({"type": "done", "sources": [], "query_type": query_type, "chunks": 0})
+            return
 
         yield _sse({"type": "stage", "text": "Generando respuesta..."})
 
-        user_message = self._build_user_message(query, context_text, query_type, has_internal_results, open_mode=_open)
+        user_message = self._build_user_message(query, context_text, query_type, has_internal_results)
         messages = [*history, {"role": "user", "content": user_message}]
 
         # Modo JSON: usamos messages.create() (no streaming) para obtener el JSON
@@ -1445,7 +1382,7 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                 model=_stream_model,
                 max_tokens=4096,
                 temperature=LLM_TEMPERATURE,
-                system=_sys_prompt,
+                system=_ACTIVE_PROMPT,
                 messages=_msgs,
             )
             _resp_text = _response.content[0].text or ""
@@ -1458,19 +1395,14 @@ No hay documentos sobre este tema en el sistema en este momento. Responde con el
                     model=_stream_model,
                     max_tokens=4096,
                     temperature=LLM_TEMPERATURE,
-                    system=_sys_prompt,
+                    system=_ACTIVE_PROMPT,
                     messages=messages,
                 )
                 raw_json = _response.content[0].text or ""
             else:
                 raw_json = ("{" + _resp_text) if _use_prefill else _resp_text
             _llm_ms = (time.perf_counter() - _t_llm) * 1000
-            _, full_answer = self._parse_llm_json(raw_json, open_mode=_open)
-            # Capa 2 (disclaimer) + Capa 3 (cálculo determinista) por código.
-            if foundational and full_answer and full_answer != NOT_FOUND_RESPONSE:
-                full_answer = self._apply_disclaimer(full_answer)
-            if full_answer and full_answer != NOT_FOUND_RESPONSE:
-                full_answer = self._maybe_append_calc(query, full_answer)
+            _, full_answer = self._parse_llm_json(raw_json)
             log_llm_call(
                 model=_stream_model,
                 prompt_tokens=_response.usage.input_tokens,
