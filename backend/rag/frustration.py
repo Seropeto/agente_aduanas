@@ -126,6 +126,39 @@ def detect_scope(query: str, available_countries, available_operations):
     return True, None  # sin referencia explícita fuera de alcance
 
 
+# ── Clasificación de intención: operativa (despacho/DIN) vs genérica ──────────
+
+# Señales de que la consulta se refiere a una OPERACIÓN / DESPACHO concreto, donde
+# NO se debe usar conocimiento fundacional (se exige la Carpeta de Despacho).
+# Nota: "importación" genérica NO cuenta (es clasificación), solo referencias a una
+# operación/despacho/auditoría específica o un número de DIN.
+_OPERATIVE_RE = re.compile(
+    r"\b(operaci[oó]n|despacho|carpeta\s+de\s+despacho|aforo|audit\w*|din)\b", re.IGNORECASE
+)
+
+
+def is_operative_query(query: str) -> bool:
+    """True si la consulta apunta a una operación/DIN/despacho específico (→ frustración).
+    False para consultas normativas o de clasificación genéricas (→ Capa 2 fundacional)."""
+    q = query or ""
+    if _DIN_RE.search(q):
+        return True
+    return bool(_OPERATIVE_RE.search(q))
+
+
+def requested_label(query: str) -> str | None:
+    """Extrae la operación/país citado en la consulta para la plantilla de frustración."""
+    q = query or ""
+    m = _DIN_RE.search(q)
+    if m:
+        return m.group(0).upper()
+    ql = q.lower()
+    for c in KNOWN_COUNTRIES:
+        if re.search(r"\b" + re.escape(c.lower()) + r"\b", ql):
+            return c
+    return None
+
+
 # ── Orquestación con protocolo ────────────────────────────────────────────────
 
 def _get_client() -> "anthropic.AsyncAnthropic":
