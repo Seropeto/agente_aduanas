@@ -35,6 +35,10 @@ services:
       LOG_LEVEL: "INFO"
       ENVIRONMENT: "production"
       SERVICE_NAME: "agentia-aduanas"
+      # IaC: declara el FQDN + puerto del backend para el routing de Traefik (Coolify),
+      # sin depender de la config manual del panel. Formato SERVICE_FQDN_<servicio>_<puerto>.
+      # Esto reemplaza el "dominio:8000" que se seteaba a mano y que causaba 504 al faltar.
+      SERVICE_FQDN_AGENTIA_8000: "aduanas.toxirodigital.cloud"
       # Parámetros discretos de PostgreSQL. POSTGRES_HOST usa el alias ÚNICO
       # 'agentia_db_host' (NO 'postgres', que colisiona con otro proyecto en la red
       # compartida 'coolify' y hacía que el app conectara a la BD equivocada).
