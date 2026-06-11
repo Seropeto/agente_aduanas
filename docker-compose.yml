@@ -10,7 +10,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - agentia_net
+      agentia_net:
+        # Alias ÚNICO para la BD. Evita la colisión de DNS: en la red compartida
+        # 'coolify' existe otro servicio llamado 'postgres' (de otro proyecto) y el
+        # app resolvía a ESE. 'agentia_db_host' no colisiona con nadie.
+        aliases:
+          - agentia_db_host
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agentia -d agentia_db"]
       interval: 10s
@@ -30,9 +35,10 @@ services:
       LOG_LEVEL: "INFO"
       ENVIRONMENT: "production"
       SERVICE_NAME: "agentia-aduanas"
-      # Parámetros discretos de PostgreSQL (robustos ante '@' u otros caracteres
-      # especiales en la contraseña; evita la URL mal formada por interpolación).
-      POSTGRES_HOST: "postgres"
+      # Parámetros discretos de PostgreSQL. POSTGRES_HOST usa el alias ÚNICO
+      # 'agentia_db_host' (NO 'postgres', que colisiona con otro proyecto en la red
+      # compartida 'coolify' y hacía que el app conectara a la BD equivocada).
+      POSTGRES_HOST: "agentia_db_host"
       POSTGRES_PORT: "5432"
       POSTGRES_DB:   "agentia_db"
       POSTGRES_USER: "agentia"
