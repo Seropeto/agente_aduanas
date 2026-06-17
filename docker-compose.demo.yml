@@ -1,0 +1,57 @@
+# docker-compose.demo.yml — Stack de DEMOSTRACIÓN (sanitizado)
+#
+# Este archivo es ILUSTRATIVO: muestra el dominio de Infraestructura como Código
+# (IaC) del proyecto. NO contiene secretos, credenciales ni la topología de red
+# del entorno productivo, que se gestiona en infraestructura privada.
+#
+# Levantar en local:  docker compose -f docker-compose.demo.yml up --build
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       agentia_db
+      POSTGRES_USER:     agentia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentia -d agentia_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  agentia:
+    # Imagen ILUSTRATIVA: el codigo fuente y los binarios son privados (repo Core).
+    # Este showcase documenta la arquitectura; no construye ni distribuye el motor.
+    image: ghcr.io/Seropeto/agentia-demo:latest
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT:   "demo"
+      LOG_LEVEL:     "INFO"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB:   "agentia_db"
+      POSTGRES_USER: "agentia"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      # Las claves de API se inyectan vía variables de entorno / secrets del
+      # orquestador. NUNCA se versionan en el repositorio.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY:    ${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  postgres_data:
