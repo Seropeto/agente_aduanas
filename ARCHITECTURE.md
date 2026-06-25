@@ -191,5 +191,38 @@ irrelevante.
 
 3. Diagrama de arquitectura
 
-flowchart TD subgraph Fuentes["Fuentes oficiales"] A1[Servicio Nacional de Aduanas] A2[Biblioteca del Congreso BCN] A3[Servicio de Impuestos Internos] end subgraph Ingesta["Ingesta y sincronización"] B1[Carga masiva inicial] B2[Sincronización periódica\ndetección de cambios por fecha] end subgraph Indice["Índice de conocimiento"] C1[(Base vectorial\npgvector)] C2[Tabla de relaciones\nmulti-sector] end subgraph Consulta["Capa de consulta"] D1[Recuperación semántica\nfiltrada por código de cliente] D2[Generación restringida al contexto\nprohibido alucinar] D3[(Log de trazabilidad)] end U[Usuario / Agencia] -->|pregunta| D1 A1 --> B1 & B2 A2 --> B1 & B2 A3 --> B1 & B2 B1 --> C1 B2 --> C1 C2 -.relevancia.-> D1 C1 --> D1 D1 --> D2 D2 -->|respuesta + fuente| U D2 --> D3
+```mermaid
+flowchart TD
+    subgraph Fuentes["Fuentes oficiales"]
+        A1[Servicio Nacional de Aduanas]
+        A2[Biblioteca del Congreso BCN]
+        A3[Servicio de Impuestos Internos]
+    end
 
+    subgraph Ingesta["Ingesta y sincronización"]
+        B1[Carga masiva inicial]
+        B2[Sincronización periódica\ndetección de cambios por fecha]
+    end
+
+    subgraph Indice["Índice de conocimiento"]
+        C1[(Base vectorial\npgvector)]
+        C2[Tabla de relaciones\nmulti-sector]
+    end
+
+    subgraph Consulta["Capa de consulta"]
+        D1[Recuperación semántica\nfiltrada por código de cliente]
+        D2[Generación restringida al contexto\nprohibido alucinar]
+        D3[(Log de trazabilidad)]
+    end
+
+    U[Usuario / Agencia] -->|pregunta| D1
+    A1 --> B1 & B2
+    A2 --> B1 & B2
+    A3 --> B1 & B2
+    B1 --> C1
+    B2 --> C1
+    C2 -.relevancia.-> D1
+    C1 --> D1
+    D1 --> D2
+    D2 -->|respuesta + fuente| U
+    D2 --> D3
