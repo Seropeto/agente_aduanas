@@ -36,9 +36,9 @@ Cada decisión se documenta bajo el modelo: *contexto → decisión → alternat
 **Decisión:** En lugar de consultar las fuentes en tiempo real por cada pregunta, se hace una **carga masiva inicial** de toda la normativa vigente a una fecha de corte, que se indexa en una base vectorial.
 
 **Alternativas evaluadas:**
-*   *Scraping en vivo por consulta:* Frágil, lento, dependiente de que la fuente esté arriba en ese instante.
-*   *API por consulta:* No todas las fuentes expuestas tienen API; latencia variable.
-*   *Carga masiva + sincronización periódica:* Elegida.
+* *Scraping en vivo por consulta:* Frágil, lento, dependiente de que la fuente esté arriba en ese instante.
+* *API por consulta:* No todas las fuentes expuestas tienen API; latencia variable.
+* *Carga masiva + sincronización periódica:* Elegida.
 
 **Por qué:** Desacopla la latencia de respuesta de la disponibilidad de la fuente. El usuario consulta contra un índice local rápido, no contra un sitio de gobierno en tiempo real. Permite operar con un comportamiento determinista y predecible.
 
@@ -64,10 +64,10 @@ Cada decisión se documenta bajo el modelo: *contexto → decisión → alternat
 
 No se confía en una sola barrera. El sistema opera bajo un modelo de mitigación estricto:
 
-*   **Capa 1 — Fuentes controladas:** El modelo solo puede responder a partir de la normativa indexada.
-*   **Capa 2 — Restricción en el prompt:** Prohibición explícita de inventar o deducir. Si no está en el contexto, se declara la falta de información.
-*   **Capa 3 — Trazabilidad (logs):** Cada interacción queda registrada inmutablemente.
-*   **Capa 4 — Revisión muestral:** Operadores validan el comportamiento general del sistema.
+* **Capa 1 — Fuentes controladas:** El modelo solo puede responder a partir de la normativa indexada.
+* **Capa 2 — Restricción en el prompt:** Prohibición explícita de inventar o deducir. Si no está en el contexto, se declara la falta de información.
+* **Capa 3 — Trazabilidad (logs):** Cada interacción queda registrada inmutablemente.
+* **Capa 4 — Revisión muestral:** Operadores validan el comportamiento general del sistema.
 
 ### 2.7 Expansión multi-sector (Tabla de Relaciones)
 
@@ -119,6 +119,51 @@ flowchart TD
     B1 -->|Vectores| C1
     B2 -->|Actualizaciones| C1
     C2 -.Define relevancia.-> D1
+    C1 -->|Contexto| D1
+    D1 --> D2
+    D2 -->|Respuesta + Cita Exacta| U
+    D2 -->|Registro de evento| D3
+```
+
+---
+
+## 4. Trade-offs y riesgos asumidos
+
+Un sistema en producción es una serie de decisiones conscientes sobre qué optimizar y qué riesgo aceptar. Los principales compromisos de nuestra arquitectura son:
+
+| Decisión | Se gana | Se asume |
+| :--- | :--- | :--- |
+| **Carga masiva + sync incremental** | Latencia predecible, lanzamiento rápido y determinista. | Ventana de desactualización controlada entre ciclos de sincronización. |
+| **Multi-tenancy lógico** | Eficiencia de costos y simplicidad operativa en etapa temprana. | Aislamiento lógico, no físico, en el esquema inicial de base de datos. |
+| **No validar 100% de respuestas** | Foco operativo y viabilidad económica del producto. | Margen de error mitigado por trazabilidad, pero no eliminado al 100%. |
+| **pgvector sobre PostgreSQL** | Unificación de la persistencia (ACID + Vectorial) en un solo motor. | Requiere monitoreo y *tuning* manual de índices vectoriales al escalar masivamente. |
+
+---
+
+## 5. Estado y evolución
+
+AgentIA está **en producción** (`aduanas.toxirodigital.cloud`) y fue seleccionado para el programa IGNITE de Startup Chile.
+
+Líneas de evolución técnica en evaluación:
+* **Caché semántica:** Implementación para reducir latencia y costo de inferencia en preguntas recurrentes.
+* **Versionado de normativa:** Soporte histórico para evaluar diferencias narrativas entre versiones de una misma ley.
+* **Canales de salida:** Apertura de la API para integraciones de terceros (PDF, correo electrónico, mensajería).
+* **Expansión progresiva:** Despliegue en nuevos sectores regulatorios a través de la tabla de relaciones.
+
+---
+
+## 6. Decisiones de Stack Tecnológico
+
+El ecosistema no se eligió por moda, sino por desempeño y control de recursos.
+
+* **Frontend (Capa de Presentación): Vanilla JS, HTML5, CSS3.**
+    Máxima velocidad de carga y eliminación absoluta del *overhead* de frameworks reactivos (React/Vue). Manipulación directa del DOM para garantizar la menor latencia posible del lado del cliente.
+* **Generación Cognitiva: Claude (Anthropic).**
+    Seleccionado por su calidad superior en comprensión de español regulatorio y estricta adherencia a restricciones sistémicas (crítico para la directiva de cero alucinación).
+* **Backend & API: Python (FastAPI).**
+    Asincronía nativa para operaciones I/O intensivas (red y LLM). Se utiliza *Pydantic* no solo para validar entradas, sino para forzar salidas estructuradas (*Structured Outputs*) garantizando que el LLM responda en un JSON predecible.
+* **Orquestación e Infraestructura: Docker + Coolify.**
+    Contenerización estricta que aísla procesos, evita colisión de dependencias en el host operativo y prepara la arquitectura *cloud-native* para escalamiento horizontal inmediato mediante réplicas en el VPS de ToxiroDigital cuando el volumen de peticiones lo exija.
     C1 -->|Contexto| D1
     D1 --> D2
     D2 -->|Respuesta + Cita Exacta| U
